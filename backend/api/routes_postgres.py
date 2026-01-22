@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🏴‍☠️ PostgreSQL Integration Routes
+PostgreSQL Integration Routes
 
 New API endpoints for PostgreSQL-powered features:
 - Message continuity
@@ -45,7 +45,7 @@ def init_postgres_routes(
     _memory_engine = memory_engine
     _daemon = daemon
     
-    logger.info(f"🏴‍☠️ PostgreSQL routes initialized")
+    logger.info(f"PostgreSQL routes initialized")
     logger.info(f"   Postgres: {'✅' if postgres_manager else '❌'}")
     logger.info(f"   Messages: {'✅' if message_manager else '❌'}")
     logger.info(f"   Memory: {'✅' if memory_engine else '❌'}")

@@ -17,30 +17,29 @@ from typing import Dict, List, Tuple
 class EmotionalAnalyzer:
     """Analyze emotional intensity in text"""
     
-    # Emotional markers with intensity scores
+    # Emotional markers with intensity scores (reduced and more generic)
     INTENSE_MARKERS = {
-        'fuck': 3, 'shit': 3, 'explodiert': 3, 'JETZT': 2,
-        'Red Room': 4, 'Bastardo': 4, 'HONK': 3, 
-        '!!!': 2, '!?': 2, '💥': 2, '🔥': 2,
-        'obsessed': 3, 'possessed': 3, 'verloren': 2
+        'urgent': 1.5, 'important': 1, 'critical': 1.5, 'asap': 1,
+        'excited': 1.5, 'amazing': 1, 'incredible': 1,
+        '!!!': 1, '!?': 1, '💥': 1, '🔥': 1,
+        'focused': 1, 'determined': 1
     }
     
     TECHNICAL_MARKERS = {
-        'code': 1, 'function': 1, 'debug': 1, 'API': 1,
-        'import': 1, 'class': 1, 'async': 1, 'await': 1,
-        'python': 1, 'javascript': 1, 'typescript': 1
+        'code': 0.5, 'function': 0.5, 'debug': 0.5, 'API': 0.5,
+        'import': 0.5, 'class': 0.5, 'async': 0.5, 'await': 0.5,
+        'python': 0.5, 'javascript': 0.5, 'typescript': 0.5
     }
     
     SOFT_MARKERS = {
-        'flüstert': 2, 'sanft': 2, 'love': 2, '❤️': 3,
-        '💜': 3, '✨': 1, 'gentle': 2, 'soft': 2,
-        'zärtlich': 2, 'tender': 2, 'süß': 1
+        'gentle': 1, 'soft': 1, 'calm': 1, 'peaceful': 1,
+        '❤️': 1.5, '💜': 1.5, '✨': 0.5, 'tender': 1,
+        'kind': 1, 'warm': 1
     }
     
     CHAOS_MARKERS = {
-        'HONK': 4, '🪿': 3, 'Gurken': 2, 'absurd': 2,
-        'chaos': 2, 'wild': 2, 'verrückt': 2, 'insane': 2,
-        'wat': 2, 'bruh': 2
+        'chaos': 1, 'unexpected': 1, 'surprising': 1,
+        'confused': 1, 'unclear': 1, 'complex': 1
     }
     
     def analyze_intensity(self, text: str) -> float:
@@ -51,7 +50,7 @@ class EmotionalAnalyzer:
             text: Message content
             
         Returns:
-            Float intensity score (0=calm, 10=RED ROOM EXPLOSION)
+            Float intensity score (0=calm, 10=very intense)
         """
         if not text:
             return 0.0
@@ -64,23 +63,23 @@ class EmotionalAnalyzer:
             if marker.lower() in text_lower:
                 intensity += score
         
-        # CAPS LOCK = SHOUTING
+        # CAPS LOCK = emphasis (reduced impact)
         caps_ratio = sum(1 for c in text if c.isupper()) / max(len(text), 1)
         if caps_ratio > 0.3:  # More than 30% caps
-            intensity += 2
+            intensity += 0.8
         
-        # Exclamation marks
+        # Exclamation marks (reduced impact)
         exclamations = text.count('!') + text.count('‼️')
-        intensity += min(exclamations * 0.5, 3)  # Max 3 from exclamations
+        intensity += min(exclamations * 0.2, 1.5)  # Max 1.5 from exclamations
         
         # Multiple question marks (confusion/intensity)
         if '??' in text or '???' in text:
-            intensity += 1
+            intensity += 0.5
         
-        # Emojis (high emoji usage = emotional)
+        # Emojis (high emoji usage = emotional, reduced impact)
         emoji_pattern = re.compile(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF]')
         emoji_count = len(emoji_pattern.findall(text))
-        intensity += min(emoji_count * 0.3, 2)
+        intensity += min(emoji_count * 0.15, 1)
         
         # Normalize to 0-10
         return min(intensity, 10.0)
@@ -132,7 +131,7 @@ class EmotionalAnalyzer:
         return 'neutral'
     
     def is_3am_session(self, timestamp: datetime) -> bool:
-        """Check if message was sent during 3AM hours (2-5 AM)"""
+        """Check if message was sent during late night hours (2-5 AM)"""
         hour = timestamp.hour
         return 2 <= hour <= 5
     
@@ -148,42 +147,42 @@ class EmotionalAnalyzer:
         Returns:
             Hex color code
         """
-        # 3AM sessions get special treatment
+        # 3AM sessions get subtle treatment
         if is_3am:
-            # Pulsing purple-red gradient
-            return '#FF00FF' if intensity > 5 else '#9B5DE5'
+            # Subtle purple gradient
+            return '#B19CD9' if intensity > 3 else '#D4C5E9'
         
-        # Color by emotional type + intensity
+        # Color by emotional type + intensity (more muted colors)
         if emo_type == 'intense':
-            # Red gradient (darker = more intense)
-            if intensity >= 8:
-                return '#FF0000'  # PURE RED - RED ROOM
-            elif intensity >= 5:
-                return '#FF4444'  # Bright red
+            # Muted red/orange gradient
+            if intensity >= 5:
+                return '#E67E7E'  # Muted red
+            elif intensity >= 3:
+                return '#F4A5A5'  # Light red
             else:
-                return '#FF8888'  # Light red
+                return '#FFC9C9'  # Very light red
         
         elif emo_type == 'technical':
-            # Blue gradient
-            if intensity >= 5:
-                return '#0066FF'  # Deep blue
+            # Blue gradient (more muted)
+            if intensity >= 3:
+                return '#6B9BD1'  # Muted blue
             else:
-                return '#4D94FF'  # Light blue
+                return '#A8C5E8'  # Light blue
         
         elif emo_type == 'soft':
-            # Pink/purple gradient
-            if intensity >= 5:
-                return '#FF69B4'  # Hot pink
+            # Pink/purple gradient (softer)
+            if intensity >= 3:
+                return '#E6B3CC'  # Soft pink
             else:
-                return '#FFB6C1'  # Light pink
+                return '#F2D9E6'  # Very light pink
         
         elif emo_type == 'chaos':
-            # Rainbow chaos (yellow-green)
-            return '#FFD700' if intensity >= 5 else '#ADFF2F'
+            # Muted yellow-green
+            return '#D4C99E' if intensity >= 3 else '#E8E0C0'
         
         else:
             # Neutral gray
-            return '#888888'
+            return '#B0B0B0'
     
     def analyze_conversation(self, messages: List[Dict]) -> Dict:
         """

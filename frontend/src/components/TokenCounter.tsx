@@ -1,7 +1,7 @@
 /**
  * Token Counter Component
  * 
- * Shows context window usage like Letta:
+ * Shows context window usage:
  * "21.77k of 131.07k tokens (83% left)"
  * 
  * With color-coded progress bar:
@@ -68,12 +68,23 @@ export function TokenCounter({ sessionId = 'default', className = '' }: TokenCou
       window.dispatchEvent(new Event('token-counter-refreshed'));
     };
     
-    console.log('🎧 TOKEN COUNTER: Listening for summary-completed events...');
+    // 🔥 Listen for model update events!
+    const handleModelUpdated = async (event: Event) => {
+      const customEvent = event as CustomEvent;
+      console.log('📡 TOKEN COUNTER: Received agentModelUpdated event!', customEvent.detail);
+      console.log('🔄 TOKEN COUNTER: Model changed, fetching new usage data...');
+      await fetchUsage();
+      console.log('✅ TOKEN COUNTER: Refresh complete after model change!');
+    };
+    
+    console.log('🎧 TOKEN COUNTER: Listening for summary-completed and agentModelUpdated events...');
     window.addEventListener('summary-completed', handleSummaryComplete);
+    window.addEventListener('agentModelUpdated', handleModelUpdated);
     
     return () => {
       clearInterval(interval);
       window.removeEventListener('summary-completed', handleSummaryComplete);
+      window.removeEventListener('agentModelUpdated', handleModelUpdated);
     };
   }, [sessionId]);
 
@@ -113,11 +124,6 @@ export function TokenCounter({ sessionId = 'default', className = '' }: TokenCou
     return 'text-green-500';
   };
 
-  const getBarColor = () => {
-    if (usage.percentage_used >= 80) return 'bg-red-500';
-    if (usage.percentage_used >= 60) return 'bg-yellow-500';
-    return 'bg-green-500';
-  };
 
   return (
     <div className={`flex flex-col gap-1 ${className}`}>

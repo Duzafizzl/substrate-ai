@@ -2,15 +2,16 @@ import React, { createContext, useContext, useState, useCallback, ReactNode, use
 import { askSubstrateAI } from '../lib/askSubstrateAI';
 import { normalizeAssistant } from '../lib/normalizeAssistant';
 import { Message, ChatSession } from '../types';
-import { detectDrifts } from '../lib/memory';
-import { pushDrift } from '../lib/memory';
+import { detectDrifts, pushDrift } from '../lib/memory';
 
 interface ChatContextProps {
   messages: Message[];
   isLoading: boolean;
   sendMessage: (content: string, mediaData?: string, mediaType?: string) => Promise<void>;
   clearMessages: () => void;
-  reloadMessages: () => Promise<void>;  // 🔥 NEW: Reload messages from backend!
+  clearUIOnly: () => void;  // 🧹 Clears UI only, backend data preserved
+  clearBackend: () => Promise<void>;  // 🗑️ Clears backend (PostgreSQL + SQLite)
+  reloadMessages: () => Promise<void>;
   sessions: ChatSession[];
   activeSessionId: string;
   createSession: () => void;
@@ -33,8 +34,6 @@ const ChatContext = createContext<ChatContextProps | undefined>(undefined);
 
 const STORAGE_KEY = 'substrate.chat.sessions.v1';
 
-// No initial seed; sessions start empty
-
 function bootstrapSession(): ChatSession {
   const now = new Date().toISOString();
   return {
@@ -47,24 +46,23 @@ function bootstrapSession(): ChatSession {
 }
 
 export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Agent-bound session (always "default") - 🏴‍☠️ FORCED FOR POSTGRESQL!
+  // Agent-bound session (always "default" - no router in public substrate)
   const AGENT_SESSION_ID = 'default';
   
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     return [{
       id: AGENT_SESSION_ID,
-      title: "Assistant's Consciousness",
+      title: "Agent's Consciousness",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      messages: [], // Will be loaded from backend!
+      messages: [],
     }];
   });
 
-  // 🏴‍☠️ ALWAYS use "default" - no session switching for now!
-  const activeSessionId = AGENT_SESSION_ID;  // Force default!
+  const activeSessionId = AGENT_SESSION_ID;
   const [_unusedActiveSessionId, setActiveSessionId] = useState<string>(AGENT_SESSION_ID);
   
-  // 🔥 Load conversation from backend (can be called manually!)
+  // Load conversation from backend
   const reloadMessages = useCallback(async () => {
     try {
       console.log('🔄 RELOAD: Starting message reload...');
@@ -79,22 +77,23 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       
       console.log(`📬 RELOAD: Loaded ${backendMessages.length} messages from backend`);
       
-      // Convert backend format to frontend format
+      // Transform backend messages to frontend format
       const messages: Message[] = backendMessages.map((msg: any) => ({
-        role: msg.role as 'user' | 'assistant' | 'system',  // Include system messages!
+        id: msg.id,
+        role: msg.role,
         content: msg.content,
-        message_type: msg.message_type || (msg.role === 'system' ? 'system' : 'inbox'),  // Preserve message_type!
-        // Preserve thinking/toolCalls if present
+        message_type: msg.message_type,
         thinking: msg.thinking,
         toolCalls: msg.tool_calls,
-        reasoningTime: msg.reasoning_time
+        reasoningTime: msg.reasoning_time,
+        // 🎯 Model can be in metadata.model (PostgreSQL) or directly on msg.model
+        model: msg.model || msg.metadata?.model,
       }));
       
-      console.log('✅ RELOAD: Updating sessions state...');
-      // Update session with loaded messages
+      setMessages(messages);
       setSessions([{
         id: AGENT_SESSION_ID,
-        title: "Assistant's Consciousness",
+        title: "Agent's Consciousness",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         messages: messages,
@@ -105,117 +104,19 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [AGENT_SESSION_ID]);
   
-  // Load conversation on mount!
+  // Load conversation on mount
   useEffect(() => {
     reloadMessages();
-  }, []); // Load once on mount
+  }, [reloadMessages]);
 
-  // Model state - fetch from backend (not localStorage!)
-  // DEFAULT model (will be overridden by backend fetch)
-  const [model, setModel] = useState<string>('qwen/qwen3-235b-a22b-thinking-2507');
+  // Model state - fetch from backend
+  const [model, setModel] = useState<string>('qwen/qwen-2.5-72b-instruct');
 
-  const [disablePresenceSeed, setDisablePresenceSeed] = useState<boolean>(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-      const parsed = JSON.parse(raw) as { disablePresenceSeed?: boolean };
-      return Boolean(parsed.disablePresenceSeed);
-    } catch {
-      return false;
-    }
-  });
+  const [disablePresenceSeed, setDisablePresenceSeed] = useState<boolean>(false);
+  const [disableNormalizer, setDisableNormalizer] = useState<boolean>(false);
+  const [disableCorePrompt, setDisableCorePrompt] = useState<boolean>(false);
 
-  const [disableNormalizer, setDisableNormalizer] = useState<boolean>(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-      const parsed = JSON.parse(raw) as { disableNormalizer?: boolean };
-      return Boolean(parsed.disableNormalizer);
-    } catch {
-      return false;
-    }
-  });
-
-  const [disableCorePrompt, setDisableCorePrompt] = useState<boolean>(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-      const parsed = JSON.parse(raw) as { disableCorePrompt?: boolean };
-      return Boolean(parsed.disableCorePrompt);
-    } catch {
-      return false;
-    }
-  });
-
-  // 🔥 SYNC MODEL FROM BACKEND SETTINGS
-  useEffect(() => {
-    const fetchModelFromBackend = async () => {
-      try {
-        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8284';
-        const response = await fetch(`${API_URL}/api/agents/default/config`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data.model) {
-            console.log(`🔄 Syncing model from backend: ${data.model}`);
-            setModel(data.model);
-            // Update localStorage too
-            try {
-              const raw = localStorage.getItem(STORAGE_KEY);
-              if (raw) {
-                const parsed = JSON.parse(raw);
-                parsed.model = data.model;
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
-              }
-            } catch (e) {
-              console.error('Failed to update localStorage:', e);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Failed to sync model from backend:', error);
-      }
-    };
-    
-    // Fetch on mount
-    fetchModelFromBackend();
-    
-    // Poll every 60 seconds to stay in sync (reduced from 3s - page reloads on save!)
-    const interval = setInterval(fetchModelFromBackend, 60000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    if (!activeSessionId && sessions.length) {
-      setActiveSessionId(sessions[0].id);
-    }
-  }, [activeSessionId, sessions]);
-
-  const active = sessions.find((s) => s.id === activeSessionId) || sessions[0];
-
-  const [messages, setMessages] = useState<Message[]>(active?.messages || []);
-  const [isLoading, setIsLoading] = useState(false);
-  const [lastUserAt, setLastUserAt] = useState<number>(() => Date.now());
-  
-  // Ref to always have the latest messages (prevents stale closure issues!)
-  const messagesRef = useRef<Message[]>(active?.messages || []);
-
-  // No more localStorage! Conversations are stored in backend DB! 🎯
-
-  // Sync messages when switching sessions
-  useEffect(() => {
-    const current = sessions.find((s) => s.id === activeSessionId) || sessions[0];
-    if (current) {
-      setMessages(current.messages);
-      messagesRef.current = current.messages; // Keep ref in sync!
-    }
-  }, [activeSessionId, sessions]);
-  
-  // Keep messagesRef in sync with messages state
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
-
-  // Fetch model from backend on mount
+  // Sync model from backend
   useEffect(() => {
     const fetchModel = async () => {
       try {
@@ -229,72 +130,175 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       } catch (error) {
         console.error('Failed to fetch model from backend:', error);
-        // Keep default fallback
       }
     };
     fetchModel();
-  }, []); // Run once on mount
+  }, []);
 
-  // Sessions start empty; no auto-greet
+  const active = sessions.find((s) => s.id === activeSessionId) || sessions[0];
+  const [messages, setMessages] = useState<Message[]>(active?.messages || []);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  // Ref to always have the latest messages
+  const messagesRef = useRef<Message[]>(active?.messages || []);
 
-  const clearMessages = useCallback(async () => {
+  // Sync messages when switching sessions
+  useEffect(() => {
+    const current = sessions.find((s) => s.id === activeSessionId) || sessions[0];
+    if (current) {
+      setMessages(current.messages);
+      messagesRef.current = current.messages;
+    }
+  }, [activeSessionId, sessions]);
+  
+  // Keep messagesRef in sync
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  // 🧹 Clear UI only - backend data preserved
+  const clearUIOnly = useCallback(() => {
+    console.log('🧹 CLEAR UI: Clearing local state only, backend data preserved');
+    
+    // Clear local state
+    setMessages([]);
+    messagesRef.current = [];
+    setSessions([{
+      id: AGENT_SESSION_ID,
+      title: "Agent's Consciousness",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [],
+    }]);
+    
+    // Also notify backend (for logging purposes, but don't delete data)
+    fetch(`http://localhost:8284/api/conversation/${AGENT_SESSION_ID}/clear?backend=false`, {
+      method: 'POST'
+    }).catch(err => console.warn('Backend notification failed:', err));
+    
+    console.log('✅ CLEAR UI: Complete');
+  }, [AGENT_SESSION_ID]);
+  
+  // 🗑️ Clear backend completely (PostgreSQL + SQLite)
+  const clearBackend = useCallback(async () => {
+    console.log('🗑️ CLEAR BACKEND: Deleting all messages from database...');
+    
     try {
-      // Clear messages in backend
-      const response = await fetch(`http://localhost:8284/api/conversation/${AGENT_SESSION_ID}/clear`, {
+      const response = await fetch(`http://localhost:8284/api/conversation/${AGENT_SESSION_ID}/clear?backend=true`, {
         method: 'POST'
       });
       
-      if (response.ok) {
-        console.log('✅ Cleared conversation in backend');
-        // Clear frontend state
-        setMessages([]);
-        setSessions([{
-          id: AGENT_SESSION_ID,
-          title: "Assistant's Consciousness",
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          messages: [],
-        }]);
+      if (!response.ok) {
+        throw new Error(`Backend returned ${response.status}`);
       }
+      
+      const data = await response.json();
+      console.log('✅ CLEAR BACKEND: Deleted', data.cleared, 'messages');
+      console.log('   PostgreSQL:', data.cleared_postgres || 0);
+      console.log('   SQLite:', data.cleared_sqlite || 0);
+      
+      // Clear local state
+      setMessages([]);
+      messagesRef.current = [];
+      setSessions([{
+        id: AGENT_SESSION_ID,
+        title: "Agent's Consciousness",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        messages: [],
+      }]);
+      
+      console.log('✅ CLEAR BACKEND: Complete');
+    } catch (error) {
+      console.error('❌ CLEAR BACKEND: Failed:', error);
+      throw error;
+    }
+  }, [AGENT_SESSION_ID]);
+
+  // Legacy function - calls clearBackend for backwards compatibility
+  const clearMessages = useCallback(async () => {
+    try {
+      await clearBackend();
     } catch (error) {
       console.error('Failed to clear conversation:', error);
     }
-  }, [AGENT_SESSION_ID]);
+  }, [clearBackend]);
 
   const sendMessage = useCallback(
     async (content: string, mediaData?: string, mediaType?: string) => {
       try {
         const userMessage: Message = { role: 'user', content };
         
-        // CRITICAL FIX: Use ref to get ALWAYS the latest messages (no stale closure!)
+        // Use ref to get latest messages
         const currentMessages = messagesRef.current;
         const updatedMessages = [...currentMessages, userMessage];
         
-        // Update both state and ref
+        // Update state and ref
         setMessages(updatedMessages);
         messagesRef.current = updatedMessages;
-        setLastUserAt(Date.now());
         setIsLoading(true);
         
-        // 🚫 NO STREAMING! Use normal endpoint for reliable message persistence!
-        // This ensures all messages are properly saved to PostgreSQL!
-        const result = await askSubstrateAI(updatedMessages, activeSessionId, model);
+        // 🌊 Create placeholder for streaming response
+        const streamingPlaceholder: Message = {
+          role: 'assistant',
+          content: '',  // Start empty, will be filled by stream
+          model,
+        };
+        
+        // Add placeholder immediately
+        setMessages((prev) => {
+          const updated = [...prev, streamingPlaceholder];
+          messagesRef.current = updated;
+          return updated;
+        });
+        
+        // 🌊 Call backend API with streaming callback
+        const result = await askSubstrateAI(
+          updatedMessages, 
+          activeSessionId, 
+          model,
+          { disablePresenceSeed, disableNormalizer, disableCorePrompt },
+          mediaData,
+          mediaType,
+          // 🌊 Live update callback for each chunk
+          (chunk: string) => {
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastMsg = updated[updated.length - 1];
+              if (lastMsg && lastMsg.role === 'assistant') {
+                lastMsg.content += chunk;
+              }
+              messagesRef.current = updated;
+              return updated;
+            });
+          }
+        );
 
-        // Update final message with complete result
+        // Apply normalizer if enabled (to final content)
+        let finalContent = result.content;
+        if (!disableNormalizer) {
+          try {
+            finalContent = normalizeAssistant(result.content);
+          } catch {
+            // Use original content if normalizer fails
+          }
+        }
+
+        // Update with final metadata (thinking, tool calls, etc.)
         setMessages((prev) => {
           const updated = [...prev];
           const lastMsg = updated[updated.length - 1];
           if (lastMsg && lastMsg.role === 'assistant') {
-            lastMsg.content = result.content;
-            lastMsg.thinking = result.thinking || undefined;
-            lastMsg.toolCalls = result.toolCalls || undefined;
+            lastMsg.content = finalContent;
+            lastMsg.thinking = result.thinking;
+            lastMsg.toolCalls = result.toolCalls;
             lastMsg.reasoningTime = result.reasoningTime;
           }
-          messagesRef.current = updated;  // Sync ref!
+          messagesRef.current = updated;
           return updated;
         });
         
-        // Dispatch request completion event (for CostCounter!)
+        // Dispatch cost event
         if (result.usage && result.usage.total_tokens > 0) {
           const requestEvent = new CustomEvent('request-complete', {
             detail: {
@@ -306,20 +310,14 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           });
           window.dispatchEvent(requestEvent);
         }
-        
-        // Add assistant message
-        setMessages((prev) => [...prev, assistantMessage]);
 
-        // Minimal drift detection on assistant output (fire-and-forget)
+        // Drift detection (fire-and-forget)
         try {
           const drifts = detectDrifts(result.content);
           if (drifts.length) {
-            const assistantIndex = updatedMessages.length; // index within session after adding assistant
-            const messageId = `${activeSessionId}_${assistantIndex}`;
+            const messageId = `${activeSessionId}_${updatedMessages.length}`;
             const ts = new Date().toISOString();
-            // Base drifts
             for (const d of drifts) {
-              // do not block UI; log and continue
               pushDrift({
                 sessionId: activeSessionId,
                 messageId,
@@ -329,48 +327,34 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 severity: d.severity,
               }).catch(() => {});
             }
-            // Drip-logger: if watchdog triggered, log "drip" drift with higher severity
-            if (result.flags?.watchdog) {
-              pushDrift({
-                sessionId: activeSessionId,
-                messageId,
-                driftId: crypto.randomUUID(),
-                ts,
-                kind: 'drip',
-                severity: 4,
-              }).catch(() => {});
-            }
           }
         } catch {
           // ignore drift errors
         }
 
+        // Update session (with streamed assistant response)
+        const finalAssistantMessage: Message = {
+          role: 'assistant',
+          content: finalContent,
+          thinking: result.thinking,
+          toolCalls: result.toolCalls,
+          reasoningTime: result.reasoningTime,
+          model,
+        };
+        
         setSessions((prev) =>
           prev.map((s) => {
             if (s.id !== activeSessionId) return s;
-            const next: ChatSession = {
+            return {
               ...s,
-              messages: [...updatedMessages, assistantMessage],
+              messages: [...updatedMessages, finalAssistantMessage],
               updatedAt: new Date().toISOString(),
+              title: s.title === 'New Session' && content ? content.slice(0, 40) : s.title,
             };
-            if (s.title === 'New Session' && content) {
-              next.title = content.slice(0, 40);
-            }
-            return next;
           })
         );
       } catch (error) {
         console.error('Error sending message:', error);
-        // Remove "Thinking..." placeholder if error occurred
-        setMessages((prev) => {
-          const newMessages = [...prev];
-          const lastIndex = newMessages.length - 1;
-          if (lastIndex >= 0 && newMessages[lastIndex].content === 'Thinking...') {
-            newMessages.pop(); // Remove thinking placeholder
-          }
-          return newMessages;
-        });
-        // Show error message
         setMessages((prev) => [
           ...prev,
           { 
@@ -382,10 +366,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setIsLoading(false);
       }
     },
-    [activeSessionId, model] // Removed 'messages' from deps - we read it from state directly!
+    [activeSessionId, model, disablePresenceSeed, disableNormalizer, disableCorePrompt]
   );
-
-  // OLD clearMessages moved to top (Backend-aware version)
 
   const createSession = useCallback(() => {
     const s = bootstrapSession();
@@ -404,13 +386,14 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setTimeout(() => {
           setSessions((cur) => {
             const remaining = cur.filter((s) => s.id !== id);
-            if (remaining.length) {
+            if (remaining.length > 0) {
               setActiveSessionId(remaining[0].id);
-              return remaining;
+            } else {
+              const newSession = bootstrapSession();
+              setActiveSessionId(newSession.id);
+              return [newSession];
             }
-            const next = bootstrapSession();
-            setActiveSessionId(next.id);
-            return [next];
+            return remaining;
           });
         }, 0);
       }
@@ -420,74 +403,33 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const renameSession = useCallback((id: string, title: string) => {
     setSessions((prev) =>
-      prev.map((s) =>
-        s.id === id
-          ? {
-              ...s,
-              title: (title || '').trim().slice(0, 60),
-              updatedAt: new Date().toISOString(),
-            }
-          : s
-      )
+      prev.map((s) => (s.id === id ? { ...s, title, updatedAt: new Date().toISOString() } : s))
     );
   }, []);
 
   const exportActiveSession = useCallback(() => {
     const current = sessions.find((s) => s.id === activeSessionId);
     if (!current) return;
-    const payload = {
-      id: current.id,
-      title: current.title,
-      createdAt: current.createdAt,
-      updatedAt: current.updatedAt,
-      messages: current.messages,
-    };
-    const ts = new Date().toISOString().replace(/[:]/g, '-');
-    const name = `substrate-session_${ts}.json`;
-    import('../lib/download').then(({ downloadText }) => {
-      downloadText(name, JSON.stringify(payload, null, 2));
-    });
+    const blob = new Blob([JSON.stringify(current, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    a.download = `substrate-session_${ts}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   }, [sessions, activeSessionId]);
 
   const saveForLater = useCallback(async () => {
     const current = sessions.find((s) => s.id === activeSessionId);
     if (!current) return;
-    const ts = new Date().toISOString().replace(/[:]/g, '-');
-    const safeTitle = (current.title || 'session').replace(/[^\p{L}\p{N}\-_ ]/gu, '').trim().replace(/\s+/g, '_');
-    const filename = `${safeTitle || 'session'}_${ts}.json`;
-    const payload = JSON.stringify({ ...current }, null, 2);
-    const { saveToLocalFS } = await import('../lib/saveToLocalFS');
-    await saveToLocalFS(filename, payload);
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(current, null, 2));
+      console.log('Session copied to clipboard');
+    } catch {
+      console.error('Failed to copy to clipboard');
+    }
   }, [sessions, activeSessionId]);
-
-  // Idle auto-save after 10 minutes without user messages (overwrite stable file)
-  useEffect(() => {
-    let timer: number | undefined;
-    const autoSave = async () => {
-      const current = sessions.find((s) => s.id === activeSessionId);
-      if (!current) return;
-      const created = new Date(current.createdAt);
-      const y = created.getFullYear();
-      const m = String(created.getMonth() + 1).padStart(2, '0');
-      const d = String(created.getDate()).padStart(2, '0');
-      const dateTag = `${y}-${m}-${d}`;
-      const safeTitle = (current.title || 'session').replace(/[^\p{L}\p{N}\-_ ]/gu, '').trim().replace(/\s+/g, '_');
-      const filename = `${safeTitle || 'session'}_${dateTag}.json`;
-      const payload = JSON.stringify({ ...current }, null, 2);
-      const { saveToLocalFS } = await import('../lib/saveToLocalFS');
-      await saveToLocalFS(filename, payload);
-    };
-    const reset = () => {
-      if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        autoSave().catch(() => {});
-      }, 10 * 60 * 1000);
-    };
-    reset();
-    return () => {
-      if (timer) window.clearTimeout(timer);
-    };
-  }, [lastUserAt, sessions, activeSessionId]);
 
   return (
     <ChatContext.Provider
@@ -496,7 +438,9 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isLoading,
         sendMessage,
         clearMessages,
-        reloadMessages,  // 🔥 Export reload function!
+        clearUIOnly,
+        clearBackend,
+        reloadMessages,
         sessions,
         activeSessionId,
         createSession,
@@ -522,7 +466,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 export const useChat = () => {
   const context = useContext(ChatContext);
-  if (context === undefined) {
+  if (!context) {
     throw new Error('useChat must be used within a ChatProvider');
   }
   return context;

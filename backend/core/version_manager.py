@@ -1,18 +1,24 @@
 """
-Agent Configuration Version Manager
-===================================
+Agent Configuration Version Manager (PostgreSQL-ONLY)
+=====================================================
 
 Git-like versioning system for agent configurations.
 Every change creates a new version, allowing rollback.
+
+100% PostgreSQL - NO SQLite!
 
 Author: Substrate AI Team 💜
 """
 
 import json
-import sqlite3
+import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Any
-from pathlib import Path
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .postgres_manager import PostgresManager
+
+logger = logging.getLogger(__name__)
 
 
 class AgentVersion:
@@ -22,12 +28,13 @@ class AgentVersion:
         self,
         version_id: str,
         agent_id: str,
-        timestamp: str,
+        timestamp: datetime,
         config: Dict[str, Any],
         system_prompt: str,
         memory_blocks: Dict[str, Any],
         change_description: Optional[str] = None,
-        parent_version: Optional[str] = None
+        parent_version: Optional[str] = None,
+        is_current: bool = False
     ):
         self.version_id = version_id
         self.agent_id = agent_id
@@ -37,18 +44,20 @@ class AgentVersion:
         self.memory_blocks = memory_blocks
         self.change_description = change_description or "No description"
         self.parent_version = parent_version
+        self.is_current = is_current
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
             "version_id": self.version_id,
             "agent_id": self.agent_id,
-            "timestamp": self.timestamp,
+            "timestamp": self.timestamp.isoformat() if isinstance(self.timestamp, datetime) else self.timestamp,
             "config": self.config,
             "system_prompt": self.system_prompt,
             "memory_blocks": self.memory_blocks,
             "change_description": self.change_description,
-            "parent_version": self.parent_version
+            "parent_version": self.parent_version,
+            "is_current": self.is_current
         }
     
     def to_json(self) -> str:
@@ -58,7 +67,9 @@ class AgentVersion:
 
 class VersionManager:
     """
-    Manages agent configuration versions.
+    Manages agent configuration versions in PostgreSQL.
+    
+    100% PostgreSQL backend!
     
     Features:
     - Auto-versioning on every save
@@ -67,49 +78,18 @@ class VersionManager:
     - Export/import .af files with versions
     """
     
-    def __init__(self, db_path: str = "./data/db/versions.db"):
-        self.db_path = db_path
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
-    
-    def _init_db(self):
-        """Initialize version database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+    def __init__(self, postgres_manager: 'PostgresManager'):
+        """
+        Initialize version manager with PostgreSQL.
         
-        # Versions table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS agent_versions (
-                version_id TEXT PRIMARY KEY,
-                agent_id TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                config TEXT NOT NULL,
-                system_prompt TEXT NOT NULL,
-                memory_blocks TEXT NOT NULL,
-                change_description TEXT,
-                parent_version TEXT,
-                is_current BOOLEAN DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (parent_version) REFERENCES agent_versions(version_id)
-            )
-        """)
+        Args:
+            postgres_manager: PostgresManager instance (REQUIRED!)
+        """
+        if not postgres_manager:
+            raise ValueError("VersionManager requires PostgresManager! No SQLite fallback.")
         
-        # Index for fast lookups
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_agent_versions 
-            ON agent_versions(agent_id, timestamp DESC)
-        """)
-        
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_current_version 
-            ON agent_versions(agent_id, is_current) 
-            WHERE is_current = 1
-        """)
-        
-        conn.commit()
-        conn.close()
-        
-        print("✅ Version database initialized")
+        self.pg = postgres_manager
+        logger.info("✅ Version Manager initialized (PostgreSQL-only)")
     
     def create_version(
         self,
@@ -120,7 +100,7 @@ class VersionManager:
         change_description: Optional[str] = None
     ) -> AgentVersion:
         """
-        Create a new version of agent configuration.
+        Create a new version of agent configuration in PostgreSQL.
         
         Args:
             agent_id: Agent identifier
@@ -132,150 +112,177 @@ class VersionManager:
         Returns:
             AgentVersion object
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self.pg._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get current version (to set as parent)
+            cursor.execute("""
+                SELECT version_id FROM agent_versions
+                WHERE agent_id = %s AND is_current = TRUE
+            """, (agent_id,))
+            result = cursor.fetchone()
+            parent_version = result[0] if result else None
+            
+            # Generate version ID
+            now = datetime.utcnow()
+            version_id = f"v_{int(now.timestamp() * 1000)}"
+            
+            # Unset current version
+            cursor.execute("""
+                UPDATE agent_versions 
+                SET is_current = FALSE 
+                WHERE agent_id = %s AND is_current = TRUE
+            """, (agent_id,))
+            
+            # Insert new version
+            cursor.execute("""
+                INSERT INTO agent_versions (
+                    version_id, agent_id, timestamp, config, 
+                    system_prompt, memory_blocks, change_description,
+                    parent_version, is_current
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE)
+            """, (
+                version_id,
+                agent_id,
+                now,
+                json.dumps(config),
+                system_prompt,
+                json.dumps(memory_blocks),
+                change_description,
+                parent_version
+            ))
+            
+            cursor.close()
         
-        # Get current version (to set as parent)
-        cursor.execute("""
-            SELECT version_id FROM agent_versions
-            WHERE agent_id = ? AND is_current = 1
-        """, (agent_id,))
-        result = cursor.fetchone()
-        parent_version = result[0] if result else None
-        
-        # Generate version ID
-        timestamp = datetime.utcnow().isoformat()
-        version_id = f"v_{int(datetime.utcnow().timestamp() * 1000)}"
-        
-        # Unset current version
-        cursor.execute("""
-            UPDATE agent_versions 
-            SET is_current = 0 
-            WHERE agent_id = ? AND is_current = 1
-        """, (agent_id,))
-        
-        # Insert new version
-        cursor.execute("""
-            INSERT INTO agent_versions (
-                version_id, agent_id, timestamp, config, 
-                system_prompt, memory_blocks, change_description,
-                parent_version, is_current
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-        """, (
-            version_id,
-            agent_id,
-            timestamp,
-            json.dumps(config),
-            system_prompt,
-            json.dumps(memory_blocks),
-            change_description,
-            parent_version
-        ))
-        
-        conn.commit()
-        conn.close()
-        
-        print(f"✅ Version created: {version_id}")
+        logger.info(f"✅ Version created: {version_id}")
         if change_description:
-            print(f"   📝 {change_description}")
+            logger.info(f"   📝 {change_description}")
         
         return AgentVersion(
             version_id=version_id,
             agent_id=agent_id,
-            timestamp=timestamp,
+            timestamp=now,
             config=config,
             system_prompt=system_prompt,
             memory_blocks=memory_blocks,
             change_description=change_description,
-            parent_version=parent_version
+            parent_version=parent_version,
+            is_current=True
         )
     
     def get_current_version(self, agent_id: str) -> Optional[AgentVersion]:
-        """Get current active version"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT version_id, agent_id, timestamp, config, 
-                   system_prompt, memory_blocks, change_description, parent_version
-            FROM agent_versions
-            WHERE agent_id = ? AND is_current = 1
-        """, (agent_id,))
-        
-        result = cursor.fetchone()
-        conn.close()
+        """Get current active version from PostgreSQL"""
+        with self.pg._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT version_id, agent_id, timestamp, config, 
+                       system_prompt, memory_blocks, change_description, parent_version
+                FROM agent_versions
+                WHERE agent_id = %s AND is_current = TRUE
+            """, (agent_id,))
+            
+            result = cursor.fetchone()
+            cursor.close()
         
         if not result:
             return None
+        
+        config = result[3]
+        if isinstance(config, str):
+            config = json.loads(config)
+        
+        memory_blocks = result[5]
+        if isinstance(memory_blocks, str):
+            memory_blocks = json.loads(memory_blocks)
         
         return AgentVersion(
             version_id=result[0],
             agent_id=result[1],
             timestamp=result[2],
-            config=json.loads(result[3]),
+            config=config,
             system_prompt=result[4],
-            memory_blocks=json.loads(result[5]),
+            memory_blocks=memory_blocks,
             change_description=result[6],
-            parent_version=result[7]
+            parent_version=result[7],
+            is_current=True
         )
     
     def get_version(self, version_id: str) -> Optional[AgentVersion]:
-        """Get specific version by ID"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT version_id, agent_id, timestamp, config, 
-                   system_prompt, memory_blocks, change_description, parent_version
-            FROM agent_versions
-            WHERE version_id = ?
-        """, (version_id,))
-        
-        result = cursor.fetchone()
-        conn.close()
+        """Get specific version by ID from PostgreSQL"""
+        with self.pg._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT version_id, agent_id, timestamp, config, 
+                       system_prompt, memory_blocks, change_description, parent_version, is_current
+                FROM agent_versions
+                WHERE version_id = %s
+            """, (version_id,))
+            
+            result = cursor.fetchone()
+            cursor.close()
         
         if not result:
             return None
+        
+        config = result[3]
+        if isinstance(config, str):
+            config = json.loads(config)
+        
+        memory_blocks = result[5]
+        if isinstance(memory_blocks, str):
+            memory_blocks = json.loads(memory_blocks)
         
         return AgentVersion(
             version_id=result[0],
             agent_id=result[1],
             timestamp=result[2],
-            config=json.loads(result[3]),
+            config=config,
             system_prompt=result[4],
-            memory_blocks=json.loads(result[5]),
+            memory_blocks=memory_blocks,
             change_description=result[6],
-            parent_version=result[7]
+            parent_version=result[7],
+            is_current=result[8]
         )
     
     def list_versions(self, agent_id: str, limit: int = 50) -> List[AgentVersion]:
-        """List all versions for an agent (newest first)"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT version_id, agent_id, timestamp, config, 
-                   system_prompt, memory_blocks, change_description, parent_version
-            FROM agent_versions
-            WHERE agent_id = ?
-            ORDER BY timestamp DESC
-            LIMIT ?
-        """, (agent_id, limit))
-        
-        results = cursor.fetchall()
-        conn.close()
+        """List all versions for an agent (newest first) from PostgreSQL"""
+        with self.pg._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT version_id, agent_id, timestamp, config, 
+                       system_prompt, memory_blocks, change_description, parent_version, is_current
+                FROM agent_versions
+                WHERE agent_id = %s
+                ORDER BY timestamp DESC
+                LIMIT %s
+            """, (agent_id, limit))
+            
+            results = cursor.fetchall()
+            cursor.close()
         
         versions = []
         for result in results:
+            config = result[3]
+            if isinstance(config, str):
+                config = json.loads(config)
+            
+            memory_blocks = result[5]
+            if isinstance(memory_blocks, str):
+                memory_blocks = json.loads(memory_blocks)
+            
             versions.append(AgentVersion(
                 version_id=result[0],
                 agent_id=result[1],
                 timestamp=result[2],
-                config=json.loads(result[3]),
+                config=config,
                 system_prompt=result[4],
-                memory_blocks=json.loads(result[5]),
+                memory_blocks=memory_blocks,
                 change_description=result[6],
-                parent_version=result[7]
+                parent_version=result[7],
+                is_current=result[8]
             ))
         
         return versions
@@ -312,8 +319,8 @@ class VersionManager:
         diff = {
             "version_1": version_id_1,
             "version_2": version_id_2,
-            "timestamp_1": v1.timestamp,
-            "timestamp_2": v2.timestamp,
+            "timestamp_1": v1.timestamp.isoformat() if isinstance(v1.timestamp, datetime) else v1.timestamp,
+            "timestamp_2": v2.timestamp.isoformat() if isinstance(v2.timestamp, datetime) else v2.timestamp,
             "changes": {}
         }
         
@@ -344,7 +351,7 @@ class VersionManager:
     
     def export_to_agent_file(self, agent_id: str, output_path: str):
         """
-        Export agent configuration to .af file (Letta format).
+        Export agent configuration to .af file.
         """
         current = self.get_current_version(agent_id)
         if not current:
@@ -354,7 +361,7 @@ class VersionManager:
             "agent_id": agent_id,
             "name": "Substrate AI",
             "version": current.version_id,
-            "timestamp": current.timestamp,
+            "timestamp": current.timestamp.isoformat() if isinstance(current.timestamp, datetime) else current.timestamp,
             "config": current.config,
             "system_prompt": current.system_prompt,
             "memory_blocks": current.memory_blocks
@@ -363,59 +370,28 @@ class VersionManager:
         with open(output_path, 'w') as f:
             json.dump(agent_data, f, indent=2)
         
-        print(f"✅ Agent exported to {output_path}")
-
-
-# ============================================
-# TESTING
-# ============================================
-
-if __name__ == "__main__":
-    print("\n🧪 TESTING VERSION MANAGER")
-    print("="*60)
+        logger.info(f"✅ Agent exported to {output_path}")
     
-    vm = VersionManager("./data/db/versions_test.db")
-    
-    # Create initial version
-    v1 = vm.create_version(
-        agent_id="default",
-        config={"model": "openrouter/polaris-alpha", "temperature": 0.7},
-        system_prompt="You are an AI assistant",
-        memory_blocks={"persona": "You are an AI assistant"},
-        change_description="Initial version"
-    )
-    print(f"\n✅ Created v1: {v1.version_id}")
-    
-    # Create second version
-    v2 = vm.create_version(
-        agent_id="default",
-        config={"model": "openrouter/polaris-alpha", "temperature": 0.8},
-        system_prompt="You are an AI assistant",
-        memory_blocks={"persona": "You are an AI assistant"},
-        change_description="Updated temperature and prompt"
-    )
-    print(f"✅ Created v2: {v2.version_id}")
-    
-    # List versions
-    versions = vm.list_versions("default")
-    print(f"\n📜 Total versions: {len(versions)}")
-    for v in versions:
-        print(f"   • {v.version_id}: {v.change_description}")
-    
-    # Get diff
-    diff = vm.get_diff(v1.version_id, v2.version_id)
-    print(f"\n🔄 Diff between versions:")
-    print(json.dumps(diff, indent=2))
-    
-    # Rollback
-    v3 = vm.rollback_to_version(v1.version_id)
-    print(f"\n⏮️  Rolled back to v1, created v3: {v3.version_id}")
-    
-    print("\n✅ All tests passed!")
-
-
-
-
-
-
-
+    def delete_all_versions(self, agent_id: str) -> int:
+        """
+        Delete all versions for an agent.
+        
+        Returns:
+            Number of versions deleted
+        """
+        with self.pg._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM agent_versions WHERE agent_id = %s
+            """, (agent_id,))
+            count = cursor.fetchone()[0]
+            
+            cursor.execute("""
+                DELETE FROM agent_versions WHERE agent_id = %s
+            """, (agent_id,))
+            
+            cursor.close()
+        
+        logger.warning(f"🗑️ Deleted {count} versions for agent {agent_id}")
+        return count

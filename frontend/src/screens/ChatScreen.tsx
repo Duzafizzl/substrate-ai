@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
 import ChatBubble from '../components/ChatBubble';
 import ChatInput from '../components/ChatInput';
@@ -10,15 +11,58 @@ import MemoryBlocksPanel from '../components/agent/MemoryBlocksPanel';
 import ResizablePanels from '../components/ui/ResizablePanels';
 import { useChat } from '../contexts/ChatContext';
 import SummarizeButton from '../components/SummarizeButton';
+import { MessageSquare, Calendar, Heart, Settings, Trash2 } from 'lucide-react';
+import HeartbeatConfigModal from '../components/agent/HeartbeatConfigModal';
+import ClearChatModal from '../components/ClearChatModal';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
-const ChatScreen: React.FC = () => {
-  const { messages, isLoading, sendMessage } = useChat();
+interface ChatScreenProps {
+  onNavigateToRooms?: () => void;
+  onNavigateToTasks?: () => void;
+  onOpenSettings?: () => void;
+}
+
+const ChatScreen: React.FC<ChatScreenProps> = ({ onNavigateToRooms, onNavigateToTasks, onOpenSettings }) => {
+  const { t } = useTranslation();
+  const { messages, isLoading, sendMessage, clearUIOnly, clearBackend } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [currentAgentId, setCurrentAgentId] = useState('default');
+  
+  // Get agent ID from URL parameter, fallback to 'default'
+  const getAgentIdFromURL = () => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('agent') || 'default';
+  };
+  
+  const [currentAgentId, setCurrentAgentId] = useState(getAgentIdFromURL());
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
+  const [heartbeatModalOpen, setHeartbeatModalOpen] = useState(false);
+  const [clearChatModalOpen, setClearChatModalOpen] = useState(false);
   
-  // Auto-scroll to bottom when messages change (Letta-style!)
+  // Update URL when agent ID changes
+  const handleAgentChange = (newAgentId: string) => {
+    setCurrentAgentId(newAgentId);
+    const params = new URLSearchParams(window.location.search);
+    if (newAgentId && newAgentId !== 'default') {
+      params.set('agent', newAgentId);
+    } else {
+      params.delete('agent');
+    }
+    const newURL = `${window.location.pathname}${params.toString() ? '?' + params.toString() : ''}`;
+    window.history.pushState({}, '', newURL);
+    console.log(`🔄 Agent ID updated in URL: ${newAgentId}`);
+  };
+  
+  // Load agent ID from URL on mount
+  useEffect(() => {
+    const agentId = getAgentIdFromURL();
+    if (agentId !== currentAgentId) {
+      setCurrentAgentId(agentId);
+      console.log(`📖 Loaded agent ID from URL: ${agentId}`);
+    }
+  }, []);
+  
+  // Auto-scroll to bottom when messages change
   useEffect(() => {
     // Immediate scroll to ensure we're always at the bottom
     if (messagesEndRef.current) {
@@ -53,11 +97,60 @@ const ChatScreen: React.FC = () => {
           </div>
 
           {/* Agent Selector */}
-          <AgentSelector onAgentChange={setCurrentAgentId} />
+          <AgentSelector onAgentChange={handleAgentChange} />
         </div>
 
         {/* Right: Controls */}
         <div className="flex items-center gap-3">
+          {/* Rooms Button */}
+          {onNavigateToRooms && (
+            <button
+              onClick={onNavigateToRooms}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-800 hover:bg-purple-600/30 text-gray-300 hover:text-purple-300 transition-colors"
+              title={t('header.rooms')}
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span className="text-sm">{t('header.rooms')}</span>
+            </button>
+          )}
+          
+          {/* Tasks Button */}
+          {onNavigateToTasks && (
+            <button
+              onClick={onNavigateToTasks}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-800 hover:bg-violet-600/30 text-gray-300 hover:text-violet-300 transition-colors"
+              title={t('header.tasks')}
+            >
+              <Calendar className="w-4 h-4" />
+              <span className="text-sm">{t('header.tasks')}</span>
+            </button>
+          )}
+
+          {/* Heartbeat Config Button */}
+          <button
+            onClick={() => setHeartbeatModalOpen(true)}
+            className="px-3 py-1.5 rounded-lg bg-pink-900/50 text-pink-300 hover:bg-pink-800 border border-pink-700 hover:border-pink-600 transition-colors text-xs font-semibold flex items-center gap-1.5"
+            title={t('header.heartbeat')}
+          >
+            <Heart className="w-3.5 h-3.5" />
+            <span>{t('header.heartbeat')}</span>
+          </button>
+          
+          {/* Settings Button */}
+          {onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+              title={t('header.settings')}
+            >
+              <Settings className="w-4 h-4" />
+              <span className="text-sm">{t('header.settings')}</span>
+            </button>
+          )}
+          
+          {/* Language Switcher */}
+          <LanguageSwitcher />
+          
           {/* Cost Counter */}
           <CostCounter />
           
@@ -114,60 +207,23 @@ const ChatScreen: React.FC = () => {
             </svg>
           </button>
 
-          {/* Clear Chat Button */}
+          {/* Clear Chat Button - Opens Danger Zone Modal */}
           <button
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              
-              if (!window.confirm('🗑️ Clear all messages?\n\nThis will delete the conversation history (no archive).')) return;
-              
-              // Clear localStorage FIRST
-              try {
-                const STORAGE_KEY = 'substrate.chat.sessions.v1';
-                const raw = localStorage.getItem(STORAGE_KEY);
-                if (raw) {
-                  const parsed = JSON.parse(raw);
-                  // Clear all sessions
-                  parsed.sessions = parsed.sessions.map((s: any) => ({ ...s, messages: [] }));
-                  localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
-                }
-              } catch (e) {
-                console.error('Failed to clear localStorage:', e);
-              }
-              
-              // Then clear backend
-              fetch('http://localhost:8284/api/agents/default/messages', {
-                method: 'DELETE'
-              })
-                .then(res => res.json())
-                .then(data => {
-                  console.log('✅ Messages cleared:', data);
-                  // Reload immediately
-                  window.location.reload();
-                })
-                .catch(error => {
-                  console.error('❌ Failed to clear:', error);
-                  // Reload anyway - localStorage is cleared
-                  window.location.reload();
-                });
-            }}
+            onClick={() => setClearChatModalOpen(true)}
             type="button"
-            className="p-2 rounded-lg text-gray-400 hover:bg-gray-800 hover:text-red-400 transition-colors focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-gray-900"
-            title="Clear chat (no archive)"
-            aria-label="Clear chat (no archive)"
+            className="p-2 rounded-lg text-gray-400 hover:bg-red-900/30 hover:text-red-400 transition-colors focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-gray-900"
+            title={t('header.clearChat')}
+            aria-label={t('header.clearChat')}
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
+            <Trash2 className="w-4 h-4" />
           </button>
           
           {/* Sidebar Toggle Buttons */}
           <button
             onClick={() => setLeftSidebarOpen(!leftSidebarOpen)}
             className={`p-2 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 focus:ring-offset-gray-900 ${leftSidebarOpen ? 'bg-gray-800 text-purple-400' : 'text-gray-400 hover:bg-gray-800'}`}
-            title="Toggle settings"
-            aria-label="Toggle settings sidebar"
+            title={t('header.toggleSettings')}
+            aria-label={t('header.toggleSettings')}
             aria-expanded={leftSidebarOpen}
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -179,8 +235,8 @@ const ChatScreen: React.FC = () => {
           <button
             onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
             className={`p-2 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 focus:ring-offset-gray-900 ${rightSidebarOpen ? 'bg-gray-800 text-purple-400' : 'text-gray-400 hover:bg-gray-800'}`}
-            title="Toggle memory"
-            aria-label="Toggle memory sidebar"
+            title={t('header.toggleMemory')}
+            aria-label={t('header.toggleMemory')}
             aria-expanded={rightSidebarOpen}
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -190,7 +246,7 @@ const ChatScreen: React.FC = () => {
         </div>
       </header>
 
-      {/* 3-COLUMN RESIZABLE LAYOUT - Letta-Style: Everything scrollable, Input fixed */}
+      {/* 3-COLUMN RESIZABLE LAYOUT - Everything scrollable, Input fixed */}
       <div className="flex-1 flex overflow-hidden">
         <ResizablePanels
           leftPanelVisible={leftSidebarOpen}
@@ -205,7 +261,7 @@ const ChatScreen: React.FC = () => {
                 <SummarizeButton sessionId="default" />
               </div>
 
-              {/* Messages - Scrollable (Letta-style: auto-scroll to bottom) */}
+              {/* Messages - Scrollable (auto-scroll to bottom) */}
               <main 
                 id="main-content"
                 className="flex-1 overflow-y-auto scroll-smooth"
@@ -252,10 +308,25 @@ const ChatScreen: React.FC = () => {
         />
       </div>
 
-      {/* FIXED CHAT INPUT - Letta-Style: Fixed at bottom, over scrollable content */}
+      {/* FIXED CHAT INPUT - Fixed at bottom, over scrollable content */}
       <div className="fixed bottom-0 left-0 right-0 z-50 bg-gray-950" role="complementary" aria-label="Chat input">
         <ChatInput onSendMessage={sendMessage} />
       </div>
+
+      {/* HEARTBEAT MODAL */}
+      <HeartbeatConfigModal
+        isOpen={heartbeatModalOpen}
+        onClose={() => setHeartbeatModalOpen(false)}
+        agentId={currentAgentId}
+      />
+
+      {/* CLEAR CHAT MODAL - Danger Zone */}
+      <ClearChatModal
+        isOpen={clearChatModalOpen}
+        onClose={() => setClearChatModalOpen(false)}
+        onClearUIOnly={clearUIOnly}
+        onClearBackend={clearBackend}
+      />
     </div>
   );
 };

@@ -3,7 +3,7 @@ PostgreSQL Manager with Coherence Magic!
 
 Persistent storage layer for Substrate AI agents.
 
-Architecture inspired by Letta's persistence patterns.
+Production-grade persistence architecture.
 Implementation: Original code by Substrate AI Contributors.
 
 Features:
@@ -55,7 +55,7 @@ class Agent:
 
 @dataclass
 class Message:
-    """Conversation message with Letta-style persistence"""
+    """Conversation message with full persistence"""
     id: str
     agent_id: str
     session_id: str
@@ -264,7 +264,7 @@ class PostgresManager:
         """
         Initialize database schema with pgvector support.
         
-        Schema design inspired by Letta's normalized approach.
+        Schema design with normalized approach.
         Security: All tables use proper constraints and indexes.
         """
         with self._get_connection() as conn:
@@ -399,6 +399,138 @@ class PostgresManager:
                 ON message_summaries(session_id, created_at DESC)
             """)
             
+            # 6. CHANNELS TABLE (Rooms/Channels for organizing messages!)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS channels (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    parent_id TEXT REFERENCES channels(id) ON DELETE SET NULL,
+                    parent_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+                    discord_channel_id TEXT,
+                    discord_webhook_url TEXT,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(agent_id, name)
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_channels_agent_id 
+                ON channels(agent_id)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_channels_parent_id 
+                ON channels(parent_id)
+            """)
+            print("✅ Channels table created")
+            
+            # 7. TASKS TABLE (Scheduled tasks!)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    task_name TEXT NOT NULL,
+                    description TEXT,
+                    schedule TEXT NOT NULL,
+                    time TEXT,
+                    next_run TIMESTAMP,
+                    active BOOLEAN DEFAULT TRUE,
+                    one_time BOOLEAN DEFAULT FALSE,
+                    action_type TEXT DEFAULT 'self_task',
+                    action_target TEXT,
+                    action_template TEXT,
+                    days_of_week INTEGER[],
+                    every_N_days INTEGER,
+                    months_of_year INTEGER[],
+                    start_date DATE,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(agent_id, task_name)
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_tasks_agent_id 
+                ON tasks(agent_id)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_tasks_next_run 
+                ON tasks(next_run) WHERE active = TRUE
+            """)
+            print("✅ Tasks table created")
+            
+            # 8. COSTS TABLE (API usage tracking!)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS costs (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+                    model TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL,
+                    output_tokens INTEGER NOT NULL,
+                    input_cost NUMERIC(12, 8) NOT NULL,
+                    output_cost NUMERIC(12, 8) NOT NULL,
+                    total_cost NUMERIC(12, 8) NOT NULL,
+                    agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+                    session_id TEXT,
+                    metadata JSONB DEFAULT '{}'
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_costs_timestamp 
+                ON costs(timestamp DESC)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_costs_model 
+                ON costs(model)
+            """)
+            print("✅ Costs table created")
+            
+            # 9. AGENT VERSIONS TABLE (Git-like versioning!)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agent_versions (
+                    version_id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+                    config JSONB NOT NULL,
+                    system_prompt TEXT NOT NULL,
+                    memory_blocks JSONB NOT NULL,
+                    change_description TEXT,
+                    parent_version TEXT REFERENCES agent_versions(version_id) ON DELETE SET NULL,
+                    is_current BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_agent_versions_agent 
+                ON agent_versions(agent_id, timestamp DESC)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_agent_versions_current 
+                ON agent_versions(agent_id) WHERE is_current = TRUE
+            """)
+            print("✅ Agent versions table created")
+            
+            # Migration: Add channel_id to messages table if not exists
+            try:
+                cursor.execute("""
+                    ALTER TABLE messages ADD COLUMN IF NOT EXISTS channel_id TEXT REFERENCES channels(id) ON DELETE SET NULL
+                """)
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id)
+                """)
+                print("✅ Messages table extended with channel_id")
+            except Exception as e:
+                # Column might already exist
+                print(f"ℹ️  channel_id migration: {e}")
+            
             cursor.close()
             print("✅ PostgreSQL schema initialized - ALL TABLES READY!")
     
@@ -462,6 +594,29 @@ class PostgresManager:
                 config=row[4]
             )
     
+    def get_all_agents(self) -> List[Agent]:
+        """Get all agents from the database"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                "SELECT id, name, created_at, last_heartbeat, config FROM agents ORDER BY created_at DESC"
+            )
+            
+            rows = cursor.fetchall()
+            cursor.close()
+            
+            return [
+                Agent(
+                    id=row[0],
+                    name=row[1],
+                    created_at=row[2],
+                    last_heartbeat=row[3],
+                    config=row[4]
+                )
+                for row in rows
+            ]
+    
     def update_agent_heartbeat(self, agent_id: str):
         """Update agent's last heartbeat timestamp"""
         with self._get_connection() as conn:
@@ -471,6 +626,61 @@ class PostgresManager:
                 (agent_id,)
             )
             cursor.close()
+    
+    def update_agent(self, agent_id: str, name: Optional[str] = None, config: Optional[Dict] = None) -> Optional[Agent]:
+        """
+        Update agent name and/or config.
+        
+        Security: Parameterized query prevents SQL injection
+        Returns: Updated Agent object or None if not found
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Build update query dynamically
+            updates = []
+            params = []
+            
+            if name is not None:
+                name = name.strip()
+                if not name:
+                    raise ValueError("Agent name cannot be empty")
+                updates.append("name = %s")
+                params.append(name)
+            
+            if config is not None:
+                updates.append("config = %s::jsonb")
+                params.append(json.dumps(config))
+            
+            if not updates:
+                cursor.close()
+                return None  # Nothing to update
+            
+            # Add agent_id to params
+            params.append(agent_id)
+            
+            # Execute update
+            query = f"""
+                UPDATE agents 
+                SET {', '.join(updates)}
+                WHERE id = %s
+                RETURNING id, name, created_at, last_heartbeat, config
+            """
+            
+            cursor.execute(query, params)
+            row = cursor.fetchone()
+            cursor.close()
+            
+            if not row:
+                return None
+            
+            return Agent(
+                id=row[0],
+                name=row[1],
+                created_at=row[2],
+                last_heartbeat=row[3],
+                config=row[4]
+            )
     
     # ============================================
     # MESSAGE METHODS - Conversation Persistence
@@ -725,9 +935,21 @@ class PostgresManager:
         self,
         agent_id: str,
         memory_type: Optional[str] = None,
-        label: Optional[str] = None
+        label: Optional[str] = None,
+        limit: Optional[int] = None
     ) -> List[Memory]:
-        """Get memories by type and/or label"""
+        """
+        Get memories by type and/or label.
+        
+        Args:
+            agent_id: Agent ID to filter by
+            memory_type: Optional memory type filter ('core', 'archival', 'recall')
+            label: Optional label filter
+            limit: Optional maximum number of memories to return
+        
+        Returns:
+            List of Memory objects matching the criteria
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             
@@ -747,6 +969,10 @@ class PostgresManager:
                 params.append(label)
             
             query += " ORDER BY created_at ASC"
+            
+            if limit:
+                query += " LIMIT %s"
+                params.append(limit)
             
             cursor.execute(query, params)
             rows = cursor.fetchall()
@@ -819,6 +1045,452 @@ class PostgresManager:
             
             return stats
     
+    # ============================================
+    # CHANNEL METHODS
+    # ============================================
+    
+    def _create_default_channels(self, agent_id: str):
+        """
+        Create default channels for a new agent.
+        Standard channels: heartbeat-log, task, reflection
+        """
+        default_channels = [
+            {"name": "💓 heartbeat-log", "description": "Heartbeat events and autonomous activity"},
+            {"name": "📋 task", "description": "Scheduled tasks and reminders"},
+            {"name": "🧠 reflection", "description": "Self-reflection and introspection"}
+        ]
+        
+        for ch in default_channels:
+            try:
+                self.create_channel(agent_id, ch["name"], ch["description"])
+            except Exception as e:
+                # Channel might already exist
+                print(f"ℹ️  Default channel '{ch['name']}' might already exist: {e}")
+    
+    def create_channel(
+        self,
+        agent_id: str,
+        name: str,
+        description: Optional[str] = None,
+        parent_id: Optional[str] = None,
+        discord_channel_id: Optional[str] = None,
+        discord_webhook_url: Optional[str] = None
+    ) -> Dict:
+        """Create a new channel for an agent"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            channel_id = str(uuid.uuid4())
+            
+            cursor.execute("""
+                INSERT INTO channels (id, agent_id, name, description, parent_id, 
+                                     discord_channel_id, discord_webhook_url, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                RETURNING id, name, description, parent_id, discord_channel_id, discord_webhook_url, created_at, updated_at
+            """, (channel_id, agent_id, name, description, parent_id, discord_channel_id, discord_webhook_url))
+            
+            row = cursor.fetchone()
+            cursor.close()
+            
+            if row:
+                return {
+                    "id": row[0],
+                    "name": row[1],
+                    "description": row[2] or "",
+                    "parent_id": row[3],
+                    "discord_channel_id": row[4],
+                    "discord_webhook_url": row[5],
+                    "created_at": row[6].isoformat() if row[6] else None,
+                    "updated_at": row[7].isoformat() if row[7] else None
+                }
+            return None
+    
+    def get_channel(self, channel_id: str, agent_id: str) -> Optional[Dict]:
+        """Get a channel by ID"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, name, description, parent_id, discord_channel_id, discord_webhook_url, created_at, updated_at
+                FROM channels
+                WHERE id = %s AND agent_id = %s
+            """, (channel_id, agent_id))
+            
+            row = cursor.fetchone()
+            cursor.close()
+            
+            if row:
+                return {
+                    "id": row[0],
+                    "name": row[1],
+                    "description": row[2] or "",
+                    "parent_id": row[3],
+                    "discord_channel_id": row[4],
+                    "discord_webhook_url": row[5],
+                    "created_at": row[6].isoformat() if row[6] else None,
+                    "updated_at": row[7].isoformat() if row[7] else None
+                }
+            return None
+    
+    def list_channels(self, agent_id: str, parent_id: Optional[str] = None, include_children: bool = False) -> List[Dict]:
+        """List all channels for an agent"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            query = """
+                SELECT id, name, description, parent_id, discord_channel_id, discord_webhook_url, created_at, updated_at
+                FROM channels
+                WHERE agent_id = %s
+            """
+            params = [agent_id]
+            
+            if parent_id:
+                query += " AND parent_id = %s"
+                params.append(parent_id)
+            elif not include_children:
+                query += " AND parent_id IS NULL"
+            
+            query += " ORDER BY created_at ASC"
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            cursor.close()
+            
+            channels = []
+            for row in rows:
+                channels.append({
+                    "id": row[0],
+                    "name": row[1],
+                    "description": row[2] or "",
+                    "parent_id": row[3],
+                    "discord_channel_id": row[4],
+                    "discord_webhook_url": row[5],
+                    "created_at": row[6].isoformat() if row[6] else None,
+                    "updated_at": row[7].isoformat() if row[7] else None
+                })
+            
+            return channels
+    
+    def update_channel(self, channel_id: str, agent_id: str, **kwargs) -> bool:
+        """Update a channel"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            updates = []
+            params = []
+            
+            for key, value in kwargs.items():
+                if key in ['name', 'description', 'discord_channel_id', 'discord_webhook_url']:
+                    updates.append(f"{key} = %s")
+                    params.append(value)
+            
+            if not updates:
+                return False
+            
+            updates.append("updated_at = NOW()")
+            params.extend([channel_id, agent_id])
+            
+            cursor.execute(f"""
+                UPDATE channels SET {', '.join(updates)}
+                WHERE id = %s AND agent_id = %s
+            """, params)
+            
+            updated = cursor.rowcount > 0
+            cursor.close()
+            return updated
+    
+    def delete_channel(self, channel_id: str, agent_id: str) -> bool:
+        """Delete a channel"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                DELETE FROM channels WHERE id = %s AND agent_id = %s
+            """, (channel_id, agent_id))
+            
+            deleted = cursor.rowcount > 0
+            cursor.close()
+            return deleted
+    
+    def get_channel_messages(
+        self,
+        channel_id: str,
+        agent_id: str,
+        limit: int = 100,
+        rule_id: Optional[str] = None,
+        rule_name: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None
+    ) -> List[Dict]:
+        """Get messages from a channel with optional filtering"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            query = """
+                SELECT id, role, content, created_at, metadata
+                FROM messages
+                WHERE channel_id = %s AND agent_id = %s
+            """
+            params = [channel_id, agent_id]
+            
+            if rule_id:
+                query += " AND metadata->>'rule_id' = %s"
+                params.append(rule_id)
+            
+            if rule_name:
+                query += " AND metadata->>'rule_name' = %s"
+                params.append(rule_name)
+            
+            if date_from:
+                query += " AND DATE(created_at) >= %s"
+                params.append(date_from)
+            
+            if date_to:
+                query += " AND DATE(created_at) <= %s"
+                params.append(date_to)
+            
+            query += " ORDER BY created_at DESC LIMIT %s"
+            params.append(limit)
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            cursor.close()
+            
+            messages = []
+            for row in rows:
+                metadata = row[4] if isinstance(row[4], dict) else (json.loads(row[4]) if row[4] else {})
+                messages.append({
+                    "id": row[0],
+                    "role": row[1],
+                    "content": row[2],
+                    "created_at": row[3].isoformat() if row[3] else None,
+                    "metadata": metadata,
+                    "rule_id": metadata.get('rule_id'),
+                    "rule_name": metadata.get('rule_name')
+                })
+            
+            return messages
+    
+    # ============================================
+    # TASK METHODS
+    # ============================================
+    
+    def create_task(
+        self,
+        agent_id: str,
+        task_name: str,
+        schedule: str,
+        description: Optional[str] = None,
+        time: Optional[str] = None,
+        next_run: Optional[datetime] = None,
+        active: bool = True,
+        one_time: bool = False,
+        action_type: str = 'self_task',
+        action_target: Optional[str] = None,
+        action_template: Optional[str] = None,
+        days_of_week: Optional[List[int]] = None,
+        every_N_days: Optional[int] = None,
+        months_of_year: Optional[List[int]] = None,
+        start_date: Optional[str] = None
+    ) -> Optional[str]:
+        """Create a new task"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            task_id = str(uuid.uuid4())
+            
+            try:
+                cursor.execute("""
+                    INSERT INTO tasks (id, agent_id, task_name, description, schedule, time, next_run,
+                                      active, one_time, action_type, action_target, action_template,
+                                      days_of_week, every_N_days, months_of_year, start_date, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                    RETURNING id
+                """, (task_id, agent_id, task_name, description, schedule, time, next_run,
+                      active, one_time, action_type, action_target, action_template,
+                      days_of_week, every_N_days, months_of_year, start_date))
+                
+                row = cursor.fetchone()
+                cursor.close()
+                return row[0] if row else None
+            except Exception as e:
+                if 'unique constraint' in str(e).lower() or 'duplicate' in str(e).lower():
+                    cursor.close()
+                    return None  # Task already exists
+                raise
+    
+    def get_task(self, task_id: str) -> Optional[Dict]:
+        """Get a task by ID"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, agent_id, task_name, description, schedule, time, next_run,
+                       active, one_time, action_type, action_target, action_template,
+                       days_of_week, every_N_days, months_of_year, start_date, created_at, updated_at
+                FROM tasks
+                WHERE id = %s
+            """, (task_id,))
+            
+            row = cursor.fetchone()
+            cursor.close()
+            
+            if row:
+                return {
+                    "task_id": row[0],
+                    "agent_id": row[1],
+                    "task_name": row[2],
+                    "description": row[3],
+                    "schedule": row[4],
+                    "time": row[5],
+                    "next_run": row[6].isoformat() if row[6] else None,
+                    "active": row[7],
+                    "one_time": row[8],
+                    "action_type": row[9],
+                    "action_target": row[10],
+                    "action_template": row[11],
+                    "days_of_week": row[12] or [],
+                    "every_N_days": row[13],
+                    "months_of_year": row[14] or [],
+                    "start_date": str(row[15]) if row[15] else None,
+                    "created_at": row[16].isoformat() if row[16] else None,
+                    "updated_at": row[17].isoformat() if row[17] else None
+                }
+            return None
+    
+    def list_tasks(self, agent_id: str, active_only: bool = False) -> List[Dict]:
+        """List all tasks for an agent"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            query = """
+                SELECT id, agent_id, task_name, description, schedule, time, next_run,
+                       active, one_time, action_type, action_target, action_template,
+                       days_of_week, every_N_days, months_of_year, start_date, created_at, updated_at
+                FROM tasks
+                WHERE agent_id = %s
+            """
+            params = [agent_id]
+            
+            if active_only:
+                query += " AND active = TRUE"
+            
+            query += " ORDER BY next_run ASC NULLS LAST"
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            cursor.close()
+            
+            tasks = []
+            for row in rows:
+                tasks.append({
+                    "task_id": row[0],
+                    "agent_id": row[1],
+                    "task_name": row[2],
+                    "description": row[3],
+                    "schedule": row[4],
+                    "time": row[5],
+                    "next_run": row[6].isoformat() if row[6] else None,
+                    "active": row[7],
+                    "one_time": row[8],
+                    "action_type": row[9],
+                    "action_target": row[10],
+                    "action_template": row[11],
+                    "days_of_week": row[12] or [],
+                    "every_N_days": row[13],
+                    "months_of_year": row[14] or [],
+                    "start_date": str(row[15]) if row[15] else None,
+                    "created_at": row[16].isoformat() if row[16] else None,
+                    "updated_at": row[17].isoformat() if row[17] else None
+                })
+            
+            return tasks
+    
+    def update_task(self, task_id: str, **kwargs) -> bool:
+        """Update a task"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            updates = []
+            params = []
+            
+            valid_fields = ['task_name', 'description', 'schedule', 'time', 'next_run',
+                           'active', 'one_time', 'action_type', 'action_target', 'action_template',
+                           'days_of_week', 'every_N_days', 'months_of_year', 'start_date']
+            
+            for key, value in kwargs.items():
+                if key in valid_fields:
+                    updates.append(f"{key} = %s")
+                    params.append(value)
+            
+            if not updates:
+                return False
+            
+            updates.append("updated_at = NOW()")
+            params.append(task_id)
+            
+            cursor.execute(f"""
+                UPDATE tasks SET {', '.join(updates)}
+                WHERE id = %s
+            """, params)
+            
+            updated = cursor.rowcount > 0
+            cursor.close()
+            return updated
+    
+    def delete_task(self, task_id: str) -> bool:
+        """Delete a task"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+            
+            deleted = cursor.rowcount > 0
+            cursor.close()
+            return deleted
+    
+    def get_due_tasks(self, agent_id: str) -> List[Dict]:
+        """Get all tasks that are due for execution"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, agent_id, task_name, description, schedule, time, next_run,
+                       active, one_time, action_type, action_target, action_template,
+                       days_of_week, every_N_days, months_of_year, start_date, created_at, updated_at
+                FROM tasks
+                WHERE agent_id = %s AND active = TRUE AND next_run <= NOW()
+                ORDER BY next_run ASC
+            """, (agent_id,))
+            
+            rows = cursor.fetchall()
+            cursor.close()
+            
+            tasks = []
+            for row in rows:
+                tasks.append({
+                    "task_id": row[0],
+                    "agent_id": row[1],
+                    "task_name": row[2],
+                    "description": row[3],
+                    "schedule": row[4],
+                    "time": row[5],
+                    "next_run": row[6].isoformat() if row[6] else None,
+                    "active": row[7],
+                    "one_time": row[8],
+                    "action_type": row[9],
+                    "action_target": row[10],
+                    "action_template": row[11],
+                    "days_of_week": row[12] or [],
+                    "every_N_days": row[13],
+                    "months_of_year": row[14] or [],
+                    "start_date": str(row[15]) if row[15] else None,
+                    "created_at": row[16].isoformat() if row[16] else None,
+                    "updated_at": row[17].isoformat() if row[17] else None
+                })
+            
+            return tasks
+    
     def close(self):
         """Close connection pool"""
         if self.pool:
@@ -834,27 +1506,29 @@ def create_postgres_manager_from_env() -> Optional[PostgresManager]:
     """
     Create PostgresManager from environment variables.
     
-    Required env vars:
+    Env vars:
     - POSTGRES_HOST (default: localhost)
     - POSTGRES_PORT (default: 5432)
     - POSTGRES_DB (default: substrate_ai)
-    - POSTGRES_USER (default: postgres)
-    - POSTGRES_PASSWORD (required!)
+    - POSTGRES_USER (default: current system user)
+    - POSTGRES_PASSWORD (optional for local connections)
     """
     from dotenv import load_dotenv
+    import getpass
     load_dotenv()
     
-    password = os.getenv("POSTGRES_PASSWORD")
-    if not password:
-        print("⚠️  POSTGRES_PASSWORD not set - PostgreSQL disabled")
-        return None
+    # Password is optional for local peer/trust connections (Homebrew default)
+    password = os.getenv("POSTGRES_PASSWORD", "")
+    
+    # Default user to current system user (Homebrew PostgreSQL default)
+    default_user = getpass.getuser()
     
     try:
         return PostgresManager(
             host=os.getenv("POSTGRES_HOST", "localhost"),
             port=int(os.getenv("POSTGRES_PORT", "5432")),
             database=os.getenv("POSTGRES_DB", "substrate_ai"),
-            user=os.getenv("POSTGRES_USER", "postgres"),
+            user=os.getenv("POSTGRES_USER", default_user),
             password=password,
             min_connections=int(os.getenv("POSTGRES_MIN_CONN", "1")),
             max_connections=int(os.getenv("POSTGRES_MAX_CONN", "10"))

@@ -4,10 +4,12 @@
 
 // Message type for chat
 export interface Message {
+  id?: string;  // Unique message ID (for threads, etc.)
   role: 'user' | 'assistant' | 'system';
   content: string;
   message_type?: 'inbox' | 'system';  // inbox = normal, system = context management
-  // Letta-style structured data (only for assistant messages)
+  model?: string;  // Which model generated this response (for assistant messages)
+  // Structured data (only for assistant messages)
   thinking?: string;
   toolCalls?: Array<{
     name: string;

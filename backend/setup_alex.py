@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Setup Script: Import ALEX Example Agent
+Setup Script: Import ALEX Example Agent (PostgreSQL-ONLY)
 
 This script automatically imports the ALEX example agent on first setup.
 Run this after installing dependencies and configuring your .env file.
+
+100% PostgreSQL - NO SQLite!
 """
 
 import os
@@ -13,26 +15,37 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+from core.postgres_manager import create_postgres_manager_from_env
 from core.state_manager import StateManager
-from letta_compat.import_agent import LettaAgentImporter
+from tools.agent_file_importer import AgentFileImporter
+from core.version_manager import VersionManager
 
 
 def setup_alex_agent():
-    """Import ALEX agent if not already loaded"""
+    """Import ALEX agent if not already loaded (PostgreSQL-only!)"""
     
     print("\n" + "="*60)
-    print("🤖 SETTING UP ALEX AGENT")
+    print("🤖 SETTING UP ALEX AGENT (PostgreSQL)")
     print("="*60 + "\n")
     
-    # Initialize state manager
-    state_manager = StateManager(
-        db_path=os.getenv("SQLITE_DB_PATH", "./data/db/substrate_state.db")
-    )
+    # Initialize PostgreSQL manager (REQUIRED!)
+    postgres_manager = create_postgres_manager_from_env()
+    if not postgres_manager:
+        print("❌ PostgreSQL is REQUIRED! Configure .env and ensure PostgreSQL is running.")
+        print("   Required env vars: POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_USER")
+        sys.exit(1)
     
-    # Check if agent already exists
-    agent_name = state_manager.get_state("agent:name", None)
-    if agent_name and agent_name != "Not loaded":
-        print(f"✅ Agent already configured: {agent_name}")
+    print("✅ PostgreSQL connected!")
+    
+    # Initialize state manager (PostgreSQL-backed)
+    state_manager = StateManager(postgres_manager=postgres_manager)
+    
+    # Check if agent already exists in PostgreSQL
+    agents = postgres_manager.get_all_agents()
+    if agents:
+        print(f"✅ Agent(s) already configured in PostgreSQL:")
+        for agent in agents:
+            print(f"   • {agent.name} (ID: {agent.id})")
         print("   Skipping import...")
         return
     
@@ -49,18 +62,23 @@ def setup_alex_agent():
     
     # Import agent
     try:
-        importer = LettaAgentImporter(state_manager)
-        result = importer.import_from_file(str(alex_file))
+        version_manager = VersionManager(postgres_manager=postgres_manager)
+        importer = AgentFileImporter(
+            state_manager=state_manager,
+            version_manager=version_manager,
+            postgres_manager=postgres_manager
+        )
+        result = importer.import_agent(str(alex_file))
         
-        print(f"\n✅ ALEX agent imported successfully!")
-        print(f"   • Name: {result['agent_name']}")
-        print(f"   • System prompt: {result['system_prompt_length']} chars")
-        print(f"   • Memory blocks: {result['blocks_imported']}")
+        print(f"\n✅ ALEX agent imported to PostgreSQL!")
+        print(f"   • Agent ID: {result['agent_id']}")
+        print(f"   • Messages imported: {result['messages_imported']}")
+        print(f"   • Version: {result['version_id']}")
         
     except Exception as e:
         print(f"\n❌ Error importing ALEX agent: {e}")
         print("   You can import it manually later:")
-        print(f"   python letta_compat/import_agent.py {alex_file}")
+        print(f"   python tools/agent_file_importer.py {alex_file}")
         return
     
     print("\n" + "="*60)
@@ -78,4 +96,3 @@ if __name__ == "__main__":
     load_dotenv()
     
     setup_alex_agent()
-

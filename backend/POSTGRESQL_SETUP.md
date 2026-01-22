@@ -100,7 +100,7 @@ python api/server.py
 
 You'll see:
 ```
-🐘 PostgreSQL ACTIVATED - Letta magic engaged! 🏴‍☠️
+🐘 PostgreSQL ACTIVATED!
 ✅ Message Continuity + Memory Coherence ONLINE!
 ```
 

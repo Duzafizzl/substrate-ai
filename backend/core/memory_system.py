@@ -134,7 +134,7 @@ class MemorySystem:
     def __init__(
         self,
         chromadb_path: str = "./data/chromadb",
-        ollama_url: str = "http://192.168.2.175:11434",
+        ollama_url: str = "http://localhost:11434",
         embedding_model: str = "nomic-embed-text"
     ):
         """

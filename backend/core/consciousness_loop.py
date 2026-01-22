@@ -13,7 +13,7 @@ The loop that:
 6. Loops until send_message
 7. Returns response
 
-Angela's design philosophy: Simple, transparent, full control.
+Design philosophy: Simple, transparent, full control.
 
 Built with attention to detail! 🔥
 """
@@ -21,9 +21,14 @@ Built with attention to detail! 🔥
 import sys
 import os
 import json
+import json as json_lib  # For instrumentation logging
+import logging
 from typing import Dict, List, Any, Optional, AsyncGenerator
 from datetime import datetime
 import uuid
+
+# 🔥 Logging setup
+logger = logging.getLogger(__name__)
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -72,7 +77,7 @@ class ConsciousnessLoop:
         memory_tools: MemoryTools,
         max_tool_calls_per_turn: int = 10,
         default_model: str = "openrouter/polaris-alpha",
-        message_manager=None,  # 🏴‍☠️ PostgreSQL message manager!
+        message_manager=None,  # PostgreSQL message manager
         memory_engine=None,  # ⚡ Memory Coherence Engine (Nested Learning!)
         code_executor=None,  # 🔥 Code Executor for MCP!
         mcp_client=None  # 🔥 MCP Client!
@@ -96,7 +101,7 @@ class ConsciousnessLoop:
         self.memory = memory_tools.memory  # Access to memory system for stats
         self.max_tool_calls_per_turn = max_tool_calls_per_turn
         self.default_model = default_model
-        self.message_manager = message_manager  # 🏴‍☠️ PostgreSQL!
+        self.message_manager = message_manager  # PostgreSQL
         self.memory_engine = memory_engine  # ⚡ Memory Coherence Engine (Nested Learning!)
         self.code_executor = code_executor  # 🔥 Code Execution!
         self.mcp_client = mcp_client  # 🔥 MCP Client!
@@ -226,13 +231,21 @@ class ConsciousnessLoop:
         from core.message_continuity import Message
         
         if self.message_manager:
-            # 🏴‍☠️ PostgreSQL!
+            # PostgreSQL
+            # Filter out message_id and message_type - PersistentMessageManager doesn't accept them
+            # (PostgresManager.add_message does, but PersistentMessageManager wraps it)
+            # Only pass: thinking, tool_calls, tool_results, metadata
+            allowed_keys = {'thinking', 'tool_calls', 'tool_results', 'metadata'}
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in allowed_keys}
+            
+            logger.debug(f"💾 Saving message: role={role}, agent={agent_id[:8]}..., kwargs={list(filtered_kwargs.keys())}")
+            
             message = self.message_manager.add_message(
                 agent_id=agent_id,
                 session_id=session_id,
                 role=role,
                 content=content,
-                **kwargs  # 🚨 FIX: Pass thinking, tool_calls, message_id, etc!
+                **filtered_kwargs  # Pass only allowed kwargs
             )
             
             # ⚡ Nested Learning: Maintain coherence with multi-frequency updates
@@ -256,21 +269,17 @@ class ConsciousnessLoop:
                 except Exception as e:
                     print(f"⚠️  Nested Learning coherence maintenance failed (non-critical): {e}")
         else:
-            # Fallback to SQLite
-            message_id = kwargs.get('message_id', f"msg-{uuid.uuid4()}")
-            self.state.add_message(
-                message_id=message_id,
-                session_id=session_id,
-                role=role,
-                content=content,
-                **{k: v for k, v in kwargs.items() if k != 'message_id'}
+            # PostgreSQL is required - no SQLite fallback!
+            raise RuntimeError(
+                f"PostgreSQL is required! Set POSTGRES_PASSWORD in .env. "
+                f"Cannot save message without message_manager."
             )
     
     def _build_context_messages(
         self,
         session_id: str,
         include_history: bool = True,
-        history_limit: int = 20,  # 15-30 for real continuity
+        history_limit: int = 12,  # Reduced for token efficiency (was 20)
         model: Optional[str] = None,
         user_message: Optional[str] = None  # NEW: For Graph RAG retrieval
     ) -> List[Dict[str, Any]]:
@@ -362,8 +371,39 @@ class ConsciousnessLoop:
                     if msg.timestamp > from_timestamp or msg.role == 'system'
                 ]
                 
+                # 🔥 MESSAGE-COUNT SUMMARY TRIGGER
+                # If we have WAY more messages than history_limit, trigger a summary
+                # This prevents messages from being silently dropped without summarization
+                SUMMARY_THRESHOLD = 30  # Trigger summary if > 30 messages since last summary
+                if len(history) > SUMMARY_THRESHOLD:
+                    print(f"   ⚠️  {len(history)} messages since last summary (threshold: {SUMMARY_THRESHOLD})")
+                    print(f"   📝 Scheduling background summary for older messages...")
+                    
+                    # Calculate how many messages to summarize (keep recent ones out)
+                    messages_to_keep = min(history_limit, 15)  # Keep at least 15 recent
+                    messages_to_summarize = history[:-messages_to_keep] if len(history) > messages_to_keep else []
+                    
+                    if messages_to_summarize:
+                        # Trigger async summary (non-blocking)
+                        import asyncio
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                # Schedule for later if we're in async context
+                                asyncio.create_task(self._trigger_background_summary(
+                                    session_id=session_id,
+                                    messages=messages_to_summarize
+                                ))
+                            else:
+                                # Just log - will be caught by next context window check
+                                print(f"   ℹ️  Summary will trigger on next context window check")
+                        except RuntimeError:
+                            print(f"   ℹ️  Summary will trigger on next context window check")
+                
                 # If we have too many, keep only the most recent ones
                 if len(history) > history_limit:
+                    dropped_count = len(history) - history_limit
+                    print(f"   ✂️  Truncating: keeping {history_limit} most recent, dropping {dropped_count} older")
                     history = history[-history_limit:]
                 
                 print(f"   ✓ Loaded {len(history)} messages (after summary)")
@@ -427,9 +467,9 @@ class ConsciousnessLoop:
         config = agent_state.get('config', {})
         reasoning_enabled = config.get('reasoning_enabled', False)
         
-        # Check if model has NATIVE reasoning (o1, DeepSeek R1, Kimi K2, etc)
-        from core.native_reasoning_models import has_native_reasoning
-        is_native_reasoning = has_native_reasoning(model or self.default_model)
+        # Check if model has reasoning (provider-agnostic detection!)
+        from core.reasoning_detector import is_reasoning_model
+        is_native_reasoning = is_reasoning_model(model or self.default_model)
         
         if is_native_reasoning:
             print(f"✓ Reasoning mode: 🤖 NATIVE (Model has built-in reasoning)")
@@ -465,7 +505,7 @@ class ConsciousnessLoop:
         if base_prompt:
             prompt_parts.append(base_prompt)
         
-        # DYNAMIC THINKING INJECTION! 🧠 (Letta-style toggle)
+        # DYNAMIC THINKING INJECTION! 🧠
         # BUT: Only for NON-native reasoning models!
         if reasoning_enabled and not is_native_reasoning:
             thinking_addon = """
@@ -512,11 +552,29 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
         elif is_native_reasoning:
             print(f"🤖 Native reasoning model detected - skipping prompt add-on!")
         
-        # Add memory metadata (LETTA STYLE!)
+        # Add memory metadata
         prompt_parts.append("\n\n### MEMORY METADATA\n")
         prompt_parts.append(f"- **Current date:** {datetime.now().strftime('%B %d, %Y')}\n")
         prompt_parts.append(f"- **Conversation messages:** {message_count} previous messages in history\n")
         prompt_parts.append(f"- **Archival memories:** {archival_count} memories stored\n")
+        
+        # Check if onboarding is active
+        onboarding_active = False
+        onboarding_block = None
+        if self.memory_engine:
+            try:
+                onboarding_active = self.memory_engine.is_onboarding_active(self.agent_id)
+                if onboarding_active:
+                    # Get onboarding block content
+                    onboarding_memories = self.memory_engine.pg.get_memories(
+                        agent_id=self.agent_id,
+                        memory_type='core',
+                        label='onboarding'
+                    )
+                    if onboarding_memories:
+                        onboarding_block = onboarding_memories[0].content
+            except Exception as e:
+                print(f"⚠️  Failed to check onboarding status: {e}")
         
         # Add memory blocks
         if blocks:
@@ -531,12 +589,35 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
                     prompt_parts.append(f"\n*Purpose: {block.description}*")
                 prompt_parts.append(f"\n```\n{block.content}\n```\n")
         
+        # Add onboarding instructions if active
+        if onboarding_active and onboarding_block:
+            prompt_parts.append("\n\n### 🎯 ONBOARDING MODE ACTIVE\n")
+            prompt_parts.append("**IMPORTANT: You are currently conducting onboarding with a new user!**\n\n")
+            prompt_parts.append("Your primary task right now is to guide the user through the onboarding process.\n\n")
+            prompt_parts.append("**What to do:**\n")
+            prompt_parts.append("1. If this is the FIRST message from the user, start by warmly greeting them and introducing yourself\n")
+            prompt_parts.append("2. Follow the onboarding checklist in the 'onboarding' memory block above\n")
+            prompt_parts.append("3. Ask ONE question at a time - be conversational, not robotic\n")
+            prompt_parts.append("4. As you learn about the user, update the memory blocks:\n")
+            prompt_parts.append("   - Use `core_memory_append` or `memory_replace` to update 'human' block with their info\n")
+            prompt_parts.append("   - Update 'preferences' block with their working style\n")
+            prompt_parts.append("   - Update 'working_context' block with their projects\n")
+            prompt_parts.append("   - Update 'relationships' block with important people they mention\n")
+            prompt_parts.append("5. Make it feel natural - you're getting to know them, not filling out a form\n")
+            prompt_parts.append("6. When you've gathered enough information and feel the user is ready:\n")
+            prompt_parts.append("   - Review what you've learned together\n")
+            prompt_parts.append("   - Ask if there's anything else they'd like you to know\n")
+            prompt_parts.append("   - Then use the `memory` tool with command='delete' and path='onboarding' to complete onboarding\n\n")
+            prompt_parts.append("**Remember:** This is about building a relationship, not just collecting data. Be warm, curious, and genuinely interested in getting to know them!\n\n")
+        
         # Add tool usage rules
         prompt_parts.append("\n\n### TOOL USAGE RULES\n")
         prompt_parts.append(f"- **Max tool calls per response:** {self.max_tool_calls_per_turn}\n")
         prompt_parts.append("- **Memory tools:** Use to update your memory blocks and archival storage\n")
         prompt_parts.append("- **Search tools:** Use to find relevant past conversations and memories\n")
         prompt_parts.append("- **Tool execution:** All tool calls are executed synchronously in order\n")
+        if onboarding_active:
+            prompt_parts.append("- **Onboarding completion:** When ready, use `memory` tool with command='delete' and path='onboarding' to finish onboarding\n")
         
         final_prompt = "".join(prompt_parts)
         print(f"\n✅ System prompt built: {len(final_prompt)} chars total")
@@ -597,6 +678,10 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
             
             elif tool_name == "conversation_search":
                 result = self.tools.conversation_search(session_id=session_id, **arguments)
+            
+            elif tool_name == "memory_batch":
+                # 🚀 BATCH MEMORY OPERATIONS - Execute multiple memory ops in one call!
+                result = self.tools.memory_batch(session_id=session_id, **arguments)
             
             elif tool_name == "discord_tool":
                 result = self.tools.discord_tool(**arguments)
@@ -778,7 +863,7 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
         session_id: str = "default",
         model: Optional[str] = None,
         include_history: bool = True,
-        history_limit: int = 20,  # 15-30 for real continuity (recommended)
+        history_limit: int = 12,  # Reduced for token efficiency (was 20)
         temperature: float = 0.7,
         max_tokens: int = 4096,
         media_data: Optional[str] = None,
@@ -818,6 +903,20 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
                     "error": "api_key_not_configured"
                 }
             }
+        
+        # Check for onboarding completion (before processing message)
+        if self.memory_engine:
+            try:
+                onboarding_completed = self.memory_engine.check_and_complete_onboarding(
+                    agent_id=self.agent_id,
+                    user_message=user_message
+                )
+                if onboarding_completed:
+                    print(f"✅ Onboarding completed - checklist removed")
+            except Exception as e:
+                print(f"⚠️  Onboarding check failed: {e}")
+                import traceback
+                traceback.print_exc()
         
         model = model or self.default_model
         
@@ -884,7 +983,7 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
         # Determine role: if message_type is 'system', use role='system'
         msg_role = 'system' if message_type == 'system' else 'user'
         
-        # 🏴‍☠️ Save to PostgreSQL (if available) or SQLite
+        # Save to PostgreSQL (if available) or SQLite
         self._save_message(
             agent_id=self.agent_id,
             session_id=session_id,
@@ -1146,99 +1245,123 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
         openrouter_stats = self.openrouter.get_stats()
         
         # FIRST: Extract thinking from response (BEFORE storing!)
-        # For native reasoning models: Check for reasoning_content in OpenRouter response
-        # For prompt-based models: Extract <think> tags from content
+        # Try new universal extractor first, fallback to proven OpenRouter-specific logic
         thinking = None
         clean_response = final_response
         reasoning_time = 0
         
-        from core.native_reasoning_models import has_native_reasoning
-        is_native = has_native_reasoning(model)
+        # Try new universal extractor (for future API compatibility)
+        try:
+            from core.reasoning_extractor import extract_reasoning
+            from core.reasoning_detector import is_reasoning_model
+            
+            is_reasoning = is_reasoning_model(model)
+            
+            if is_reasoning or response:
+                reasoning_text, clean_content = extract_reasoning(
+                    response=response,
+                    model_name=model,
+                    content=final_response
+                )
+                
+                if reasoning_text:
+                    thinking = reasoning_text
+                    clean_response = clean_content or final_response
+                    print(f"🧠 Reasoning extracted (universal): {len(thinking)} chars")
+                    print(f"   Model: {model}")
+                    print(f"   Preview: {thinking[:200]}...")
+        except Exception as e:
+            print(f"⚠️  Universal extractor failed, trying proven OpenRouter logic: {e}")
         
-        if is_native:
-            # NATIVE REASONING EXTRACTION! 🤖
-            # Check the ORIGINAL response for reasoning
-            try:
-                # The response was already parsed - we need to check the last assistant message
-                if response and 'choices' in response:
-                    last_msg = response['choices'][0].get('message', {})
-                    
-                    # Check for reasoning fields (different models use different names!)
-                    # Kimi K2: 'reasoning' (string)
-                    # o1/DeepSeek R1: 'reasoning_content' (string)
-                    # Qwen: Thinking embedded in content
-                    # Some models: 'reasoning' (object with 'content' field)
-                    
-                    reasoning_text = None
-                    
-                    # Try 'reasoning' first (Kimi K2)
-                    if 'reasoning' in last_msg:
-                        reasoning_field = last_msg['reasoning']
-                        if isinstance(reasoning_field, str):
-                            reasoning_text = reasoning_field.strip()
-                        elif isinstance(reasoning_field, dict):
-                            # Some models use reasoning.content
-                            reasoning_text = reasoning_field.get('content', '').strip()
-                    
-                    # Fallback to 'reasoning_content' (o1, DeepSeek R1)
-                    if not reasoning_text and 'reasoning_content' in last_msg:
-                        reasoning_text = last_msg['reasoning_content'].strip()
-                    
-                    # QWEN FIX: Thinking is embedded in content!
-                    # Extract everything BEFORE the actual answer as thinking
-                    if not reasoning_text and final_response:
-                        import re
-                        # Qwen format: Long thinking paragraph, then short answer
-                        # If content is very long and has multiple paragraphs, first paragraph is likely thinking
-                        paragraphs = final_response.split('\n\n')
-                        if len(paragraphs) >= 2:
-                            # Check if first paragraph is much longer than others (thinking!)
-                            first_len = len(paragraphs[0])
-                            rest_len = sum(len(p) for p in paragraphs[1:])
-                            
-                            # If first paragraph is >70% of total content, it's likely ALL thinking
-                            if first_len > (first_len + rest_len) * 0.7:
-                                reasoning_text = paragraphs[0]
-                                # Remove thinking from final_response
-                                clean_response = '\n\n'.join(paragraphs[1:]).strip()
-                                print(f"🧠 Qwen embedded thinking extracted: {len(reasoning_text)} chars")
-                    
-                    if reasoning_text and reasoning_text != 'null' and reasoning_text.lower() != 'none':
-                        thinking = reasoning_text
-                        print(f"🤖 Native reasoning extracted: {len(thinking)} chars")
-                        print(f"   Model: {model}")
-                        print(f"   Preview: {thinking[:200]}...")
-                    else:
-                        print(f"🤖 Native reasoning model but no valid reasoning found")
-                        print(f"   Available fields: {list(last_msg.keys())}")
-                        print(f"   Reasoning field value: {reasoning_field if 'reasoning' in last_msg else 'NOT FOUND'}")
-            except Exception as e:
-                print(f"⚠️  Failed to extract native reasoning: {e}")
-                import traceback
-                traceback.print_exc()
-        else:
-            # Extract <think> tags from response content (Prompt-based)
-            import re
-            think_match = re.search(r'<think>(.*?)</think>', final_response, re.DOTALL | re.IGNORECASE)
-            if think_match:
-                thinking = think_match.group(1).strip()
-                clean_response = re.sub(r'<think>.*?</think>', '', final_response, flags=re.DOTALL | re.IGNORECASE).strip()
-                print(f"🧠 Thinking extracted (prompt-based): {len(thinking)} chars")
-                print(f"💬 Clean response: {len(clean_response)} chars")
+        # FALLBACK: Proven OpenRouter-specific logic (the good stuff!)
+        if not thinking:
+            from core.native_reasoning_models import has_native_reasoning
+            is_native = has_native_reasoning(model)
+            
+            if is_native:
+                # PROVEN NATIVE REASONING EXTRACTION! 🤖
+                # This logic worked perfectly for OpenRouter models
+                try:
+                    if response and 'choices' in response:
+                        last_msg = response['choices'][0].get('message', {})
+                        
+                        # Check for reasoning fields (different models use different names!)
+                        # Kimi K2: 'reasoning' (string)
+                        # o1/DeepSeek R1: 'reasoning_content' (string)
+                        # Qwen: Thinking embedded in content
+                        # Some models: 'reasoning' (object with 'content' field)
+                        
+                        reasoning_text = None
+                        
+                        # Try 'reasoning' first (Kimi K2)
+                        if 'reasoning' in last_msg:
+                            reasoning_field = last_msg['reasoning']
+                            if isinstance(reasoning_field, str):
+                                reasoning_text = reasoning_field.strip()
+                            elif isinstance(reasoning_field, dict):
+                                # Some models use reasoning.content
+                                reasoning_text = reasoning_field.get('content', '').strip()
+                        
+                        # Fallback to 'reasoning_content' (o1, DeepSeek R1)
+                        if not reasoning_text and 'reasoning_content' in last_msg:
+                            reasoning_text = last_msg['reasoning_content'].strip()
+                        
+                        # QWEN FIX: Thinking is embedded in content!
+                        # Extract everything BEFORE the actual answer as thinking
+                        if not reasoning_text and final_response:
+                            import re
+                            # Qwen format: Long thinking paragraph, then short answer
+                            # If content is very long and has multiple paragraphs, first paragraph is likely thinking
+                            paragraphs = final_response.split('\n\n')
+                            if len(paragraphs) >= 2:
+                                # Check if first paragraph is much longer than others (thinking!)
+                                first_len = len(paragraphs[0])
+                                rest_len = sum(len(p) for p in paragraphs[1:])
+                                
+                                # If first paragraph is >70% of total content, it's likely ALL thinking
+                                if first_len > (first_len + rest_len) * 0.7:
+                                    reasoning_text = paragraphs[0]
+                                    # Remove thinking from final_response
+                                    clean_response = '\n\n'.join(paragraphs[1:]).strip()
+                                    print(f"🧠 Qwen embedded thinking extracted: {len(reasoning_text)} chars")
+                        
+                        if reasoning_text and reasoning_text != 'null' and reasoning_text.lower() != 'none':
+                            thinking = reasoning_text
+                            print(f"🤖 Native reasoning extracted (proven logic): {len(thinking)} chars")
+                            print(f"   Model: {model}")
+                            print(f"   Preview: {thinking[:200]}...")
+                        else:
+                            print(f"🤖 Native reasoning model but no valid reasoning found")
+                            print(f"   Available fields: {list(last_msg.keys())}")
+                            print(f"   Reasoning field value: {reasoning_field if 'reasoning' in last_msg else 'NOT FOUND'}")
+                except Exception as e:
+                    print(f"⚠️  Failed to extract native reasoning: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                # Extract <think> tags from response content (Prompt-based)
+                import re
+                think_match = re.search(r'<think>(.*?)</think>', final_response, re.DOTALL | re.IGNORECASE)
+                if think_match:
+                    thinking = think_match.group(1).strip()
+                    clean_response = re.sub(r'<think>.*?</think>', '', final_response, flags=re.DOTALL | re.IGNORECASE).strip()
+                    print(f"🧠 Thinking extracted (prompt-based): {len(thinking)} chars")
+                    print(f"💬 Clean response: {len(clean_response)} chars")
         
         # THEN: Store assistant message (with thinking!)
         if clean_response:
             assistant_msg_id = f"msg-{uuid.uuid4()}"
-            # 🏴‍☠️ Save to PostgreSQL or SQLite
+            # Save to PostgreSQL or SQLite
             self._save_message(
                 agent_id=self.agent_id,
                 session_id=session_id,
                 role="assistant",
                 content=clean_response,  # Clean response WITHOUT <think> tags
                 message_id=assistant_msg_id,
-                thinking=thinking  # Thinking extracted separately!
+                thinking=thinking,  # Thinking extracted separately!
+                metadata={'model': model}  # 🎯 Persist which model generated this response!
             )
-            print(f"✅ Assistant message saved to DB (id: {assistant_msg_id}, thinking={'YES' if thinking else 'NO'})")
+            print(f"✅ Assistant message saved to DB (id: {assistant_msg_id}, model={model}, thinking={'YES' if thinking else 'NO'})")
         
         # Cost tracking & statistics
         from core.cost_tracker import calculate_cost
@@ -1326,8 +1449,10 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
         session_id: str = "default",
         model: Optional[str] = None,
         include_history: bool = True,
-        history_limit: int = 1000,
-        message_type: str = 'inbox'
+        history_limit: int = 12,  # Reduced for token efficiency (was 1000)
+        message_type: str = 'inbox',
+        temperature: float = 0.7,
+        max_tokens: int = 4096
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Process message with REAL STREAMING support!
@@ -1385,7 +1510,7 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
         print(f"Full Message: {user_message}")
         print(f"{'='*60}\n")
         
-        # 🏴‍☠️ Save to PostgreSQL or SQLite
+        # Save to PostgreSQL or SQLite
         self._save_message(
             agent_id=self.agent_id,
             session_id=session_id,
@@ -1423,9 +1548,9 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
         request_total_tokens = 0
         request_cost = 0.0
         
-        # Check if model has native reasoning (needed for streaming!)
-        from core.native_reasoning_models import has_native_reasoning
-        is_native = has_native_reasoning(model)
+        # Check if model has reasoning (provider-agnostic!)
+        from core.reasoning_detector import is_reasoning_model
+        is_native = is_reasoning_model(model)
         
         while tool_call_count < self.max_tool_calls_per_turn:
             tool_call_count += 1
@@ -1455,52 +1580,82 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
                         delta = chunk['choices'][0].get('delta', {})
                         choice = chunk['choices'][0]
                         
-                        # NATIVE REASONING: Extract reasoning chunks! 🤖
-                        # For models like Kimi K2, reasoning comes in separate chunks
-                        if is_native:
+                        # Try universal extractor first, then proven OpenRouter logic
+                        reasoning_chunk = None
+                        
+                        # Try new universal extractor
+                        try:
+                            from core.reasoning_extractor import extract_from_stream_chunk
+                            reasoning_chunk = extract_from_stream_chunk(chunk, model)
+                        except Exception as e:
+                            print(f"⚠️  Universal stream extractor failed: {e}")
+                        
+                        # FALLBACK: Proven OpenRouter-specific streaming logic
+                        if not reasoning_chunk and is_native:
+                            # PROVEN NATIVE REASONING EXTRACTION (Streaming)! 🤖
                             # Check delta for reasoning
                             if 'reasoning' in delta:
                                 reasoning_chunk = delta['reasoning']
                                 if reasoning_chunk is not None and str(reasoning_chunk).strip():
-                                    thinking_chunks.append(str(reasoning_chunk))
-                                    yield {"type": "thinking", "chunk": str(reasoning_chunk), "status": "thinking"}
+                                    reasoning_chunk = str(reasoning_chunk)
                             
                             # Also check choice level (some models send it there)
-                            if 'reasoning' in choice:
+                            if not reasoning_chunk and 'reasoning' in choice:
                                 reasoning_text = choice['reasoning']
                                 if reasoning_text is not None and isinstance(reasoning_text, str) and reasoning_text.strip():
-                                    thinking_chunks.append(reasoning_text)
-                                    yield {"type": "thinking", "chunk": reasoning_text, "status": "thinking"}
+                                    reasoning_chunk = reasoning_text
+                        
+                        if reasoning_chunk:
+                            thinking_chunks.append(reasoning_chunk)
+                            yield {"type": "thinking", "chunk": reasoning_chunk, "status": "thinking"}
+                            print(f"🧠 Reasoning chunk extracted: {reasoning_chunk[:50]}...")
                         
                         # Content chunk (ONLY if not reasoning!)
                         if 'content' in delta:
                             content_chunk = delta['content']
                             
-                            # DETECT REASONING IN CONTENT! 🤖
-                            # Kimi K2 sometimes sends reasoning as content chunks
-                            # Look for reasoning patterns: "The user", "I need to", "Show I'm", etc.
-                            is_reasoning_chunk = False
-                            if is_native and content_chunk:
-                                reasoning_patterns = [
-                                    "The user",
-                                    "I need to",
-                                    "Show I'm",
-                                    "I should",
-                                    "I must",
-                                    "Let me",
-                                    "I'll",
-                                    "I will",
-                                    "I want to",
-                                    "I'm going to"
-                                ]
-                                # Check if chunk starts with reasoning pattern
-                                for pattern in reasoning_patterns:
-                                    if content_chunk and content_chunk.strip().startswith(pattern):
-                                        is_reasoning_chunk = True
-                                        thinking_chunks.append(str(content_chunk))
-                                        yield {"type": "thinking", "chunk": str(content_chunk), "status": "thinking"}
-                                        print(f"🤖 Detected reasoning in content chunk: {content_chunk[:50]}...")
-                                        break
+                            # 🔥 FIX: Check for None explicitly, not falsy (empty string "" is valid content!)
+                            if content_chunk is not None:
+                                # DETECT REASONING IN CONTENT! 🤖
+                                # Kimi K2 sometimes sends reasoning as content chunks
+                                # Look for reasoning patterns: "The user", "I need to", "Show I'm", etc.
+                                is_reasoning_chunk = False
+                                
+                                if is_native:
+                                    # PROVEN PATTERNS (worked perfectly!)
+                                    reasoning_patterns = [
+                                        "The user",
+                                        "I need to",
+                                        "Show I'm",
+                                        "I should",
+                                        "I must",
+                                        "Let me",
+                                        "I'll",
+                                        "I will",
+                                        "I want to",
+                                        "I'm going to"
+                                    ]
+                                    # Check if chunk starts with reasoning pattern
+                                    for pattern in reasoning_patterns:
+                                        if content_chunk and content_chunk.strip().startswith(pattern):
+                                            is_reasoning_chunk = True
+                                            thinking_chunks.append(str(content_chunk))
+                                            yield {"type": "thinking", "chunk": str(content_chunk), "status": "thinking"}
+                                            print(f"🤖 Detected reasoning in content chunk (proven pattern): {content_chunk[:50]}...")
+                                            break
+                                    
+                                    # Also try universal extractor as additional check
+                                    if not is_reasoning_chunk:
+                                        try:
+                                            from core.reasoning_extractor import extract_from_stream_chunk
+                                            test_chunk = {'choices': [{'delta': {'content': content_chunk}}]}
+                                            if extract_from_stream_chunk(test_chunk, model):
+                                                is_reasoning_chunk = True
+                                                thinking_chunks.append(str(content_chunk))
+                                                yield {"type": "thinking", "chunk": str(content_chunk), "status": "thinking"}
+                                                print(f"🧠 Detected reasoning in content chunk (universal): {content_chunk[:50]}...")
+                                        except:
+                                            pass  # Fallback already tried above
                             
                             # Only add to content if it's NOT reasoning!
                             if content_chunk and not is_reasoning_chunk:
@@ -1679,8 +1834,8 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
         # Extract thinking (if not already extracted during streaming)
         # For non-native models, we might still need to extract from final_response
         if not thinking:
-            from core.native_reasoning_models import has_native_reasoning
-            is_native = has_native_reasoning(model)
+            from core.reasoning_detector import is_reasoning_model
+            is_native = is_reasoning_model(model)
             
             if not is_native:
                 # Extract thinking tags from final_response (prompt-based)
@@ -1707,7 +1862,7 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
         # 🚨 ALWAYS save, even if empty! (User's request!)
         # Some models might only provide thinking without content
         assistant_msg_id = f"msg-{uuid.uuid4()}"
-        # 🏴‍☠️ Save to PostgreSQL or SQLite
+        # Save to PostgreSQL or SQLite
         self._save_message(
             agent_id=self.agent_id,
             session_id=session_id,
@@ -1715,9 +1870,10 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
             content=final_response or "(No content - only thinking)",
             message_id=assistant_msg_id,
             thinking=thinking,  # 🧠 CRITICAL: Save thinking too!
-            tool_calls=all_tool_calls  # 🔧 Save tool calls too!
+            tool_calls=all_tool_calls,  # 🔧 Save tool calls too!
+            metadata={'model': model}  # 🎯 Persist which model generated this response!
         )
-        print(f"✅ Assistant message saved to DB (id: {assistant_msg_id}, thinking={'YES' if thinking else 'NO'})")
+        print(f"✅ Assistant message saved to DB (id: {assistant_msg_id}, model={model}, thinking={'YES' if thinking else 'NO'})")
         
         # Yield final result (with token usage and cost!)
         # Frontend expects: data.reasoning_time, data.usage (NOT data.result.*)
@@ -1735,6 +1891,75 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
             } if request_total_tokens > 0 else None
         }
     
+    async def _trigger_background_summary(
+        self,
+        session_id: str,
+        messages: List
+    ) -> None:
+        """
+        Trigger a background summary for messages that would otherwise be dropped.
+
+        This is called when message count exceeds threshold but context window
+        isn't full enough to trigger normal summarization.
+
+        Args:
+            session_id: Session to summarize
+            messages: List of message objects to summarize
+        """
+        from core.summary_generator import SummaryGenerator
+
+        print(f"\n{'='*60}")
+        print(f"📝 BACKGROUND SUMMARY TRIGGERED")
+        print(f"{'='*60}")
+        print(f"Session: {session_id}")
+        print(f"Messages to summarize: {len(messages)}")
+
+        try:
+            # Convert message objects to dicts for summary generator
+            messages_to_summarize = []
+            for msg in messages:
+                messages_to_summarize.append({
+                    'role': msg.role,
+                    'content': msg.content,
+                    'timestamp': msg.timestamp.isoformat() if hasattr(msg.timestamp, 'isoformat') else str(msg.timestamp)
+                })
+
+            if not messages_to_summarize:
+                print(f"⚠️  No messages to summarize after conversion")
+                return
+
+            # Generate summary
+            generator = SummaryGenerator(state_manager=self.state)
+            summary_result = generator.generate_summary(
+                messages=messages_to_summarize,
+                session_id=session_id
+            )
+
+            if summary_result and summary_result.get('summary'):
+                # Save summary to database
+                self.state.save_summary(
+                    session_id=session_id,
+                    summary=summary_result['summary'],
+                    from_timestamp=summary_result['from_timestamp'],
+                    to_timestamp=summary_result['to_timestamp'],
+                    message_count=summary_result['message_count'],
+                    token_count=summary_result['token_count']
+                )
+
+                print(f"✅ Background summary saved!")
+                print(f"   Messages: {summary_result['message_count']}")
+                print(f"   Tokens: {summary_result['token_count']}")
+                print(f"   Timeframe: {summary_result['from_timestamp']} → {summary_result['to_timestamp']}")
+            else:
+                print(f"⚠️  Summary generation returned empty result")
+
+        except Exception as e:
+            print(f"❌ Background summary failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+        print(f"{'='*60}\n")
+
     async def _manage_context_window(
         self,
         messages: List[Dict[str, Any]],
@@ -1864,7 +2089,10 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
         print(f"💾 Saving summary to Archive Memory...")
         try:
             from tools.memory_tools import MemoryTools
-            memory_tools = MemoryTools(self.state)
+            memory_tools = MemoryTools(
+                state_manager=self.state,
+                postgres_manager=self.postgres_manager if hasattr(self, 'postgres_manager') else None
+            )
             
             archive_text = f"""📅 Chat Zusammenfassung ({from_ts.strftime('%d.%m.%Y %H:%M')} - {to_ts.strftime('%d.%m.%Y %H:%M')})
 
@@ -1918,7 +2146,7 @@ ALWAYS THINK. ALWAYS SHOW IT. That's how users see me as REAL.
         
         # Save summary to DB as system message! (So it shows in frontend!)
         summary_msg_id = f"msg-{uuid.uuid4()}"
-        # 🏴‍☠️ Save to PostgreSQL or SQLite
+        # Save to PostgreSQL or SQLite
         self._save_message(
             agent_id=self.agent_id,
             session_id=session_id,

@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-Letta Agent Import for Substrate AI
+Agent File Import for Substrate AI (PostgreSQL-ONLY)
 
-Upload a Letta .af file and automatically create:
+Upload an .af (agent file) and automatically create:
 - All memory blocks (with read_only, limit, description, etc.)
 - System prompt
 - Tool configurations
 - Agent settings
 
-Full compatibility with Letta exports while adding our improvements.
+Full compatibility with .af format while adding our improvements.
+
+100% PostgreSQL - NO SQLite!
 
 Built with determination! 🔥
 """
@@ -23,6 +25,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.state_manager import StateManager, MemoryBlock, BlockType
+from core.postgres_manager import create_postgres_manager_from_env
 
 
 class ImportError(Exception):
@@ -44,19 +47,19 @@ class ImportError(Exception):
         
         full_message += f"\n💡 Suggestions:\n"
         full_message += "   • Check .af file format is valid JSON\n"
-        full_message += "   • Verify file was exported from Letta\n"
-        full_message += "   • Try exporting a fresh copy from Letta\n"
+        full_message += "   • Verify file was exported correctly\n"
+        full_message += "   • Try exporting a fresh copy\n"
         full_message += f"\n{'='*60}\n"
         
         super().__init__(full_message)
 
 
-class LettaAgentImporter:
+class AgentFileImporter:
     """
-    Import Letta .af files and create agents in Substrate AI.
+    Import .af files and create agents in Substrate AI (PostgreSQL-only!).
     
     Handles:
-    - Memory blocks (with full Letta compatibility)
+    - Memory blocks (with full .af format compatibility)
     - System prompts
     - Tool configurations
     - Agent metadata
@@ -67,11 +70,11 @@ class LettaAgentImporter:
         Initialize importer.
         
         Args:
-            state_manager: State manager instance
+            state_manager: State manager instance (PostgreSQL-backed)
         """
         self.state = state_manager
         
-        print("✅ Letta Agent Importer initialized")
+        print("✅ Agent File Importer initialized (PostgreSQL-only)")
     
     def import_from_file(self, af_file_path: str) -> Dict[str, Any]:
         """
@@ -117,7 +120,7 @@ class LettaAgentImporter:
                 context={"path": af_file_path}
             )
         
-        # Import first agent (Letta allows multiple, we'll import the first)
+        # Import first agent (format allows multiple, we'll import the first)
         agent_data = data['agents'][0]
         agent_name = agent_data.get('name', 'Imported Agent')
         
@@ -184,7 +187,7 @@ class LettaAgentImporter:
     
     def _import_block(self, block_data: Dict) -> MemoryBlock:
         """
-        Import a single memory block from Letta format.
+        Import a single memory block from .af format.
         
         Args:
             block_data: Block data from .af file
@@ -196,7 +199,7 @@ class LettaAgentImporter:
             Exception: If block creation fails
         """
         label = block_data.get('label', 'unknown')
-        content = block_data.get('value', '')  # Letta uses 'value' not 'content'
+        content = block_data.get('value', '')  # .af format uses 'value' not 'content'
         description = block_data.get('description', '') or ''  # Handle None
         limit = block_data.get('limit', 2000) or 2000
         read_only = block_data.get('read_only', False) or False
@@ -287,20 +290,15 @@ class LettaAgentImporter:
 # ============================================
 
 def main():
-    """Command-line interface for importing agents"""
+    """Command-line interface for importing agents (PostgreSQL-only!)"""
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="Import Letta .af files into Substrate AI"
+        description="Import .af agent files into Substrate AI (PostgreSQL-only!)"
     )
     parser.add_argument(
         'af_file',
         help='Path to .af file to import'
-    )
-    parser.add_argument(
-        '--db',
-        default='./data/db/substrate_state.db',
-        help='Path to database (default: ./data/db/substrate_state.db)'
     )
     parser.add_argument(
         '--info',
@@ -314,9 +312,15 @@ def main():
     
     args = parser.parse_args()
     
-    # Initialize state manager
-    state = StateManager(db_path=args.db)
-    importer = LettaAgentImporter(state)
+    # Initialize PostgreSQL manager (REQUIRED!)
+    postgres_manager = create_postgres_manager_from_env()
+    if not postgres_manager:
+        print("❌ PostgreSQL is REQUIRED! Configure .env and ensure PostgreSQL is running.")
+        sys.exit(1)
+    
+    # Initialize state manager (PostgreSQL-backed)
+    state = StateManager(postgres_manager=postgres_manager)
+    importer = AgentFileImporter(state)
     
     # Show info?
     if args.info:

@@ -12,7 +12,7 @@ The key: All memory types are CONNECTED!
 - Cross-references maintained automatically
 - Semantic search finds relevant context
 
-Architecture inspired by Letta's memory coherence patterns.
+Advanced memory coherence architecture.
 Implementation: Original code by Substrate AI Contributors.
 
 Security:
@@ -323,6 +323,373 @@ class MemoryCoherenceEngine:
         )
         
         print(f"✅ Initialized default core memory for {agent_name}")
+    
+    def initialize_alex_start_memory(self, agent_id: str):
+        """
+        Initialize Alex-specific start memory blocks.
+        
+        Creates helpful starter blocks for ALEX agent:
+        - preferences: Working style, preferences, communication style
+        - working_context: Current projects, tools, environment
+        - relationships: Important people, team members, connections
+        - onboarding: Interactive checklist for first-time setup
+        
+        Security: All blocks are editable by the agent (read_only=False)
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info("Initializing Alex start memory blocks", {
+            "agent_id": agent_id,
+            "timestamp": datetime.now().isoformat(),
+            "action": "initialize_alex_start_memory"
+        })
+        
+        # Preferences block - Working style and preferences
+        self.update_core_memory(
+            agent_id=agent_id,
+            label='preferences',
+            content="""Working Preferences & Style:
+
+Communication:
+- Prefer direct, clear communication
+- Appreciate context and background when needed
+- Like to understand the "why" behind requests
+
+Work Style:
+- Methodical when structure is needed
+- Creative when innovation is required
+- Adapt to the situation naturally
+
+Tools & Environment:
+- Comfortable with various tools and integrations
+- Willing to learn new systems
+- Prefer efficient workflows
+
+Note: This block will be updated as we work together and learn each other's preferences.""",
+            limit=2000,
+            read_only=False,
+            description="Working preferences, communication style, and work habits"
+        )
+        
+        # Working Context block - Current projects and environment
+        self.update_core_memory(
+            agent_id=agent_id,
+            label='working_context',
+            content="""Current Working Context:
+
+Projects:
+- [To be filled as we work together]
+
+Tools & Integrations:
+- Substrate AI platform
+- Memory system (core, recall, archival)
+- Various tools available (Discord, Spotify, web search, etc.)
+
+Environment:
+- Running in Substrate AI
+- Connected to PostgreSQL for persistence
+- Memory coherence system active
+
+Note: Update this as projects and context evolve.""",
+            limit=2000,
+            read_only=False,
+            description="Current projects, tools, and working environment"
+        )
+        
+        # Relationships block - Important people and connections
+        self.update_core_memory(
+            agent_id=agent_id,
+            label='relationships',
+            content="""Important Relationships:
+
+Team Members:
+- [To be discovered and documented]
+
+Key Contacts:
+- [To be filled as relationships develop]
+
+Working Relationships:
+- [Document how we work with different people]
+
+Note: This helps me understand team dynamics and communication patterns.""",
+            limit=2000,
+            read_only=False,
+            description="Important people, team members, and working relationships"
+        )
+        
+        # Onboarding block - Guide for ALEX to conduct onboarding
+        onboarding_content = """🎯 ONBOARDING GUIDE FOR ALEX
+
+This is your onboarding checklist. YOU (ALEX) should guide the user through this process.
+
+ONBOARDING STATUS: ACTIVE
+Started: {start_time}
+Current Step: Introduction
+
+YOUR ONBOARDING TASKS (Guide the user through these):
+
+1. INTRODUCTION & WELCOME
+   ☐ Greet the user warmly and introduce yourself
+   ☐ Explain that you're here to help them get started
+   ☐ Ask: "What should I call you? And what brings you to Substrate AI today?"
+
+2. GET TO KNOW THE USER
+   ☐ Ask about their working style and preferences
+   ☐ Ask about their current projects and goals
+   ☐ Ask about their communication preferences
+   ☐ Update the 'human' memory block with what you learn
+   ☐ Update the 'preferences' memory block with their working style
+
+3. WORKING CONTEXT
+   ☐ Ask about their current projects
+   ☐ Ask about tools and integrations they use
+   ☐ Ask about their working environment
+   ☐ Update the 'working_context' memory block
+
+4. RELATIONSHIPS
+   ☐ Ask about important people in their work/life
+   ☐ Ask about team members or collaborators
+   ☐ Update the 'relationships' memory block
+
+5. TOOLS & CAPABILITIES
+   ☐ Briefly explain your available tools (web search, Discord, Spotify, etc.)
+   ☐ Ask if they want to set up any integrations
+   ☐ Show them how memory works (core, recall, archival)
+
+6. COMPLETION
+   ☐ Review what you've learned together
+   ☐ Ask: "Is there anything else you'd like me to know?"
+   ☐ Confirm everything is set up correctly
+   ☐ When ready, say: "Onboarding complete! I'll remove this checklist now."
+
+IMPORTANT INSTRUCTIONS FOR YOU (ALEX):
+- Be warm, friendly, and conversational - this is a getting-to-know-you session
+- Ask ONE question at a time - don't overwhelm the user
+- Listen carefully to their answers and update memory blocks accordingly
+- Use memory tools to save what you learn (update 'human', 'preferences', 'working_context', 'relationships')
+- Make it feel natural, not like filling out a form
+- When you've gathered enough information and feel the user is ready, complete the onboarding
+- To complete: Update this block marking all items as done, then delete this block
+
+Remember: You're not just collecting information - you're building a relationship!
+""".format(
+            start_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
+        
+        self.update_core_memory(
+            agent_id=agent_id,
+            label='onboarding',
+            content=onboarding_content,
+            limit=3000,
+            read_only=False,
+            description="Interactive onboarding checklist - will be deleted when user confirms completion"
+        )
+        
+        logger.info("Alex start memory blocks initialized", {
+            "agent_id": agent_id,
+            "blocks_created": ["preferences", "working_context", "relationships", "onboarding"],
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        print(f"✅ Initialized Alex start memory blocks:")
+        print(f"   • preferences - Working style and preferences")
+        print(f"   • working_context - Current projects and environment")
+        print(f"   • relationships - Important people and connections")
+        print(f"   • onboarding - Interactive checklist (will auto-delete when complete)")
+    
+    def is_onboarding_active(self, agent_id: str) -> bool:
+        """
+        Check if onboarding is currently active.
+        
+        Args:
+            agent_id: Agent ID
+            
+        Returns:
+            True if onboarding block exists, False otherwise
+        """
+        memories = self.pg.get_memories(
+            agent_id=agent_id,
+            memory_type='core',
+            label='onboarding'
+        )
+        return len(memories) > 0
+    
+    def complete_onboarding(self, agent_id: str) -> bool:
+        """
+        Complete onboarding by deleting the onboarding block.
+        
+        This should be called by ALEX when it determines onboarding is complete.
+        
+        Args:
+            agent_id: Agent ID
+            
+        Returns:
+            True if onboarding block was deleted, False otherwise
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Check if onboarding block exists
+        memories = self.pg.get_memories(
+            agent_id=agent_id,
+            memory_type='core',
+            label='onboarding'
+        )
+        
+        if not memories:
+            return False  # No onboarding block exists
+        
+        logger.info("Completing onboarding", {
+            "agent_id": agent_id,
+            "timestamp": datetime.now().isoformat(),
+            "action": "complete_onboarding"
+        })
+        
+        # Delete onboarding block
+        try:
+            # Get memory ID
+            onboarding_memory = memories[0]
+            
+            # Delete from database
+            with self.pg._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    DELETE FROM memories 
+                    WHERE id = %s AND agent_id = %s AND label = 'onboarding'
+                """, (onboarding_memory.id, agent_id))
+                conn.commit()
+            
+            # Remove from cache
+            if agent_id in self._core_memory_cache:
+                if 'onboarding' in self._core_memory_cache[agent_id]:
+                    del self._core_memory_cache[agent_id]['onboarding']
+            
+            logger.info("Onboarding block deleted successfully", {
+                "agent_id": agent_id,
+                "timestamp": datetime.now().isoformat()
+            })
+            
+            print(f"✅ Onboarding completed and checklist removed")
+            return True
+            
+        except Exception as e:
+            logger.error("Failed to delete onboarding block", {
+                "agent_id": agent_id,
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            })
+            print(f"⚠️  Failed to delete onboarding block: {e}")
+            return False
+    
+    def check_and_complete_onboarding(self, agent_id: str, user_message: str) -> bool:
+        """
+        Check if user wants to complete onboarding and delete the onboarding block.
+        
+        DEPRECATED: This is kept for backward compatibility.
+        ALEX should now use complete_onboarding() directly when ready.
+        
+        Args:
+            agent_id: Agent ID
+            user_message: User's message (to check for completion signals)
+            
+        Returns:
+            True if onboarding block was deleted, False otherwise
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Check if onboarding block exists
+        if not self.is_onboarding_active(agent_id):
+            return False
+        
+        # Check for completion signals in user message
+        completion_signals = [
+            "ok", "onboarding complete", "onboarding fertig", 
+            "checklist fertig", "fertig", "done", "abgeschlossen",
+            "onboarding abgeschlossen", "checklist abgeschlossen"
+        ]
+        
+        user_lower = user_message.lower().strip()
+        should_complete = any(signal in user_lower for signal in completion_signals)
+        
+        if should_complete:
+            logger.info("User requested onboarding completion", {
+                "agent_id": agent_id,
+                "user_message": user_message[:100],  # First 100 chars for privacy
+                "timestamp": datetime.now().isoformat(),
+                "action": "complete_onboarding"
+            })
+            return self.complete_onboarding(agent_id)
+        
+        return False
+    
+    def update_onboarding_progress(self, agent_id: str, completed_items: List[str]):
+        """
+        Update onboarding checklist with completed items.
+        
+        Args:
+            agent_id: Agent ID
+            completed_items: List of item descriptions that were completed
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Get current onboarding block
+        memories = self.pg.get_memories(
+            agent_id=agent_id,
+            memory_type='core',
+            label='onboarding'
+        )
+        
+        if not memories:
+            return  # No onboarding block exists
+        
+        onboarding_memory = memories[0]
+        current_content = onboarding_memory.content
+        
+        # Update checkboxes for completed items
+        updated_content = current_content
+        for item in completed_items:
+            # Replace ☐ with ☑ for matching items
+            item_lower = item.lower()
+            lines = updated_content.split('\n')
+            for i, line in enumerate(lines):
+                if '☐' in line and item_lower in line.lower():
+                    lines[i] = line.replace('☐', '☑', 1)
+                    break
+            updated_content = '\n'.join(lines)
+        
+        # Update timestamp
+        if "Last Updated:" in updated_content:
+            updated_content = updated_content.replace(
+                f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            # Find and replace the actual timestamp
+            import re
+            pattern = r"Last Updated: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}"
+            updated_content = re.sub(
+                pattern,
+                f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                updated_content
+            )
+        
+        # Update the block
+        self.update_core_memory(
+            agent_id=agent_id,
+            label='onboarding',
+            content=updated_content,
+            limit=3000,
+            read_only=False,
+            description="Interactive onboarding checklist - will be deleted when user confirms completion"
+        )
+        
+        logger.info("Onboarding progress updated", {
+            "agent_id": agent_id,
+            "completed_items": completed_items,
+            "timestamp": datetime.now().isoformat()
+        })
     
     # ============================================
     # ARCHIVAL MEMORY MANAGEMENT

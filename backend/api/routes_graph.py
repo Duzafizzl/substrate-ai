@@ -40,22 +40,24 @@ except ImportError:
     NEO4J_AVAILABLE = False
     print("⚠️  Neo4j sync service not available - using local DB fallback")
 
-# Import state manager for local DB access
-try:
-    from core.state_manager import StateManager
-    from core.memory_system import MemorySystem
-    from services.emotional_analyzer import EmotionalAnalyzer
-    state_manager = StateManager()
-    emotional_analyzer = EmotionalAnalyzer()
+# Global managers (set via init function)
+_postgres_manager = None
+_state_manager = None
+_memory_system = None
+_emotional_analyzer = None
+
+
+def init_graph_routes(postgres_manager=None, state_manager=None, memory_system=None):
+    """Initialize graph routes with dependencies"""
+    global _postgres_manager, _state_manager, _memory_system, _emotional_analyzer
+    _postgres_manager = postgres_manager
+    _state_manager = state_manager
+    _memory_system = memory_system
     try:
-        memory_system = MemorySystem()
+        from services.emotional_analyzer import EmotionalAnalyzer
+        _emotional_analyzer = EmotionalAnalyzer()
     except:
-        memory_system = None
-except ImportError:
-    state_manager = None
-    memory_system = None
-    emotional_analyzer = None
-    print("⚠️  State manager not available")
+        _emotional_analyzer = None
 
 
 # ============================================
@@ -63,8 +65,8 @@ except ImportError:
 # ============================================
 
 def get_nodes_from_local_db():
-    """Get graph nodes directly from PostgreSQL/SQLite/ChromaDB (no Neo4j)"""
-    if not state_manager:
+    """Get graph nodes directly from PostgreSQL (no Neo4j)"""
+    if not _state_manager and not _postgres_manager:
         return jsonify({'error': 'Database not available', 'nodes': [], 'count': 0}), 503
     
     nodes = []

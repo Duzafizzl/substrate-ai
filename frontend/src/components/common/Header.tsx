@@ -22,7 +22,7 @@ const Header: React.FC<HeaderProps> = ({ title }) => {
     await pushSessionToMemory(current, { id: model, name: 'Assistant', model: `ollama:${model}`, version: 'local' }).catch(() => {});
   };
 
-  // 🏴‍☠️ SAVE MODEL TO BACKEND + .ENV!
+  // SAVE MODEL TO BACKEND + .ENV
   const handleModelChange = async (newModel: string) => {
     // Update local state immediately
     setModel(newModel);

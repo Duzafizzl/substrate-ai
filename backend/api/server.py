@@ -17,6 +17,7 @@ import sys
 import os
 import asyncio
 import logging
+from datetime import datetime
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
@@ -43,9 +44,12 @@ from core.version_manager import VersionManager
 from api.routes_models import models_bp
 from api.routes_agents import agents_bp, init_agents_routes
 from api.routes_costs import costs_bp, init_costs_routes
-from api.routes_graph import graph_bp  # 🕸️ Graph RAG!
+from api.routes_graph import graph_bp, init_graph_routes  # 🕸️ Graph RAG!
 from api.routes_discord import discord_bp, init_discord_routes  # 🎮 Discord Bot Integration!
 from api.routes_setup import setup_bp  # 🚀 First-time setup & onboarding!
+from api.routes_channels import channels_bp, init_channels_routes  # 📂 Channels/Rooms!
+from api.routes_tasks import tasks_bp, init_tasks_routes  # 📋 Scheduled Tasks!
+from api.routes_heartbeat import heartbeat_bp, init_heartbeat_routes  # 💓 Heartbeat Config!
 
 # PostgreSQL Coherence Layer
 from core.postgres_manager import create_postgres_manager_from_env
@@ -95,30 +99,30 @@ logger.info("🚀 Initializing Substrate AI Server...")
 # PostgreSQL Integration for state persistence
 postgres_manager = create_postgres_manager_from_env()
 
-# State Manager: PostgreSQL-first, SQLite fallback
-state_manager = StateManager(
-    db_path=os.getenv("SQLITE_DB_PATH", "./data/db/substrate_state.db"),
-    postgres_manager=postgres_manager  # Enable PostgreSQL-first reads!
-)
+# State Manager: PostgreSQL ONLY!
+if not postgres_manager:
+    raise RuntimeError(
+        "❌ PostgreSQL is REQUIRED! Configure POSTGRES_* in .env and ensure PostgreSQL is running."
+    )
+
+state_manager = StateManager(postgres_manager=postgres_manager)
 message_manager = None
 memory_engine = None
 
 if postgres_manager:
-    logger.info("🐘 PostgreSQL ACTIVATED - Letta magic engaged! 🏴‍☠️")
+    logger.info("🐘 PostgreSQL ACTIVATED!")
     message_manager = PersistentMessageManager(postgres_manager)
     memory_engine = MemoryCoherenceEngine(postgres_manager, message_manager)
     logger.info("✅ Message Continuity + Memory Coherence ONLINE!")
-else:
-    logger.info("⚠️  PostgreSQL disabled - using SQLite only")
+# PostgreSQL is always enabled (required)
 
-version_manager = VersionManager(
-    db_path=os.getenv("VERSION_DB_PATH", "./data/db/versions.db")
-)
-logger.info("📦 Version Manager initialized - AUTO-VERSIONING ENABLED!")
+# Version Manager (PostgreSQL-only!)
+version_manager = VersionManager(postgres_manager=postgres_manager)
+logger.info("📦 Version Manager initialized (PostgreSQL) - AUTO-VERSIONING ENABLED!")
 
-cost_tracker = CostTracker(
-    db_path=os.getenv("COST_DB_PATH", "./data/costs.db")
-)
+# Cost Tracker (PostgreSQL-only!)
+cost_tracker = CostTracker(postgres_manager=postgres_manager)
+logger.info("💰 Cost Tracker initialized (PostgreSQL)")
 
 # OpenRouter Real Cost Monitor (GROUND TRUTH!)
 from core.openrouter_cost_monitor import OpenRouterCostMonitor
@@ -172,7 +176,8 @@ logger.info("✅ Cost Tools initialized - Agent can check costs!")
 memory_tools = MemoryTools(
     state_manager=state_manager,
     memory_system=memory_system,
-    cost_tools=cost_tools  # NEW: Pass cost tools!
+    cost_tools=cost_tools,  # NEW: Pass cost tools!
+    postgres_manager=postgres_manager  # For IntegrationTools cost tracking
 )
 
 context_calculator = ContextWindowCalculator(
@@ -229,7 +234,7 @@ consciousness_loop = ConsciousnessLoop(
     memory_tools=memory_tools,
     max_tool_calls_per_turn=int(os.getenv("MAX_TOOL_CALLS_PER_TURN", 10)),
     default_model=os.getenv("DEFAULT_LLM_MODEL", "openrouter/polaris-alpha"),
-    message_manager=message_manager,  # 🏴‍☠️ PostgreSQL!
+    message_manager=message_manager,  # PostgreSQL!
     memory_engine=memory_engine,  # ⚡ Nested Learning (if available)!
     code_executor=code_executor,  # 🔥 Code Execution (if available)!
     mcp_client=mcp_client  # 🔥 MCP Client (if available)!
@@ -259,8 +264,8 @@ def auto_load_alex_if_needed():
         logger.info("🤖 No agent configured - auto-loading ALEX...")
         
         # Import ALEX
-        from letta_compat.import_agent import LettaAgentImporter
-        importer = LettaAgentImporter(state_manager)
+        from agent_compat.import_agent import AgentFileImporter
+        importer = AgentFileImporter(state_manager)
         result = importer.import_from_file(alex_file)
         
         logger.info(f"✅ ALEX agent auto-loaded: {result['agent_name']}")
@@ -281,19 +286,26 @@ app.register_blueprint(models_bp)
 app.register_blueprint(agents_bp)
 app.register_blueprint(costs_bp)
 app.register_blueprint(graph_bp)  # 🕸️ Graph RAG!
-app.register_blueprint(postgres_bp)  # 🏴‍☠️ PostgreSQL routes!
+app.register_blueprint(postgres_bp)  # PostgreSQL routes!
 app.register_blueprint(setup_bp)  # 🚀 First-time setup!
 app.register_blueprint(conversation_bp)
 app.register_blueprint(streaming_bp)  # NEW: Streaming endpoint!
 app.register_blueprint(discord_bp)  # 🎮 Discord Bot Integration!
+app.register_blueprint(channels_bp)  # 📂 Channels/Rooms!
+app.register_blueprint(tasks_bp)  # 📋 Scheduled Tasks!
+app.register_blueprint(heartbeat_bp)  # 💓 Heartbeat Config!
 
 # Initialize routes with dependencies
-init_agents_routes(state_manager, version_manager)
+init_agents_routes(state_manager, version_manager, postgres_manager)
 init_costs_routes(cost_tracker, openrouter_monitor)  # Pass REAL monitor!
 init_conversation_routes(state_manager, consciousness_loop, postgres_manager)  # Pass PostgreSQL too!
 init_streaming_routes(consciousness_loop, rate_limiter)  # NEW: Initialize streaming!
-init_postgres_routes(postgres_manager, message_manager, memory_engine)  # 🏴‍☠️ PostgreSQL MAGIC!
+init_postgres_routes(postgres_manager, message_manager, memory_engine)  # PostgreSQL integration
 init_discord_routes(consciousness_loop, state_manager, rate_limiter, postgres_manager)  # 🎮 Discord Bot!
+init_channels_routes(state_manager, postgres_manager)  # 📂 Channels/Rooms!
+init_tasks_routes(state_manager, postgres_manager)  # 📋 Scheduled Tasks!
+init_heartbeat_routes(postgres_manager)  # 💓 Heartbeat Config!
+init_graph_routes(postgres_manager, state_manager, memory_system)  # 🕸️ Graph RAG!
 
 
 # ============================================
@@ -501,9 +513,12 @@ def ollama_compat_chat():
                         )
                         
                         # Run async generator in sync context
+                        event_count = 0
                         while True:
                             try:
                                 chunk = loop.run_until_complete(async_gen.__anext__())
+                                event_count += 1
+                                
                                 # Send as newline-delimited JSON (Ollama format)
                                 yield json.dumps(chunk) + '\n'
                             except StopAsyncIteration:
@@ -554,7 +569,7 @@ def ollama_compat_chat():
             }), 500
         
         # Return in Ollama format (for UI compatibility!)
-        # BUT - enhanced with Letta-style structured data! 💜
+        # Enhanced with structured data! 💜
         response = {
             "model": model,
             "created_at": datetime.now().isoformat() + "Z",
@@ -564,7 +579,7 @@ def ollama_compat_chat():
             },
             "done": True,
             "done_reason": "stop",
-            # Letta-style structured data for frontend!
+            # Structured data for frontend!
             "thinking": result.get('thinking'),  # <think> tags extracted
             "tool_calls": result.get('tool_calls', []),  # Tool execution history
             "reasoning_time": result.get('reasoning_time', 0),  # Time spent thinking
@@ -824,16 +839,37 @@ def get_context_usage():
         
         tool_schemas = memory_tools.get_tool_schemas()
         
-        # Get REAL context window from agent settings (NOT hardcoded!)
-        model = state_manager.get_state("agent.model", os.getenv("DEFAULT_LLM_MODEL", "qwen/qwen-2.5-72b-instruct"))
-        max_tokens_str = state_manager.get_state("agent.context_window", "128000")
+        # Get REAL context window based on CURRENT model (not from state!)
+        # This ensures the counter always shows the correct max for the selected model
+        # 🔥 FIX: Use get_agent_state() to get the model from agent config correctly
+        agent_state = state_manager.get_agent_state()
+        model = agent_state.get("model", os.getenv("DEFAULT_LLM_MODEL", "qwen/qwen-2.5-72b-instruct"))
         
-        try:
-            max_tokens = int(max_tokens_str)
-        except (ValueError, TypeError):
-            max_tokens = 128000  # Fallback
+        # Handle ollama: prefix (remove it for context window lookup)
+        if model.startswith("ollama:"):
+            model = model.replace("ollama:", "")
         
-        logger.info(f"📊 Context Usage: session={session_id}, model={model}, max_tokens={max_tokens}")
+        # Use get_max_context_window to get the correct context window for this model
+        # This will fetch from OpenRouter API if model not in cache
+        from core.model_context_window import get_max_context_window
+        max_tokens = get_max_context_window(model)
+        
+        logger.info("Context window usage calculation", {
+            "session_id": session_id,
+            "model": model,
+            "max_tokens": max_tokens,
+            "source": "model_lookup",
+            "memory_blocks_count": len(memory_blocks),
+            "conversation_messages_count": len(conversation_messages),
+            "action": "get_context_usage"
+        })
+        
+        # 🔥 DEBUG: Log model lookup for debugging
+        logger.debug(f"📊 Token Counter: Model '{model}' → Max Context: {max_tokens:,} tokens", {
+            "model": model,
+            "max_tokens": max_tokens,
+            "session_id": session_id
+        })
         
         # Calculate usage
         usage = context_calculator.calculate_usage(
@@ -844,10 +880,25 @@ def get_context_usage():
             max_tokens=max_tokens
         )
         
+        logger.info("Context window usage calculated", {
+            "session_id": session_id,
+            "total_tokens": usage.total_tokens,
+            "max_tokens": max_tokens,
+            "percentage_used": usage.percentage_used,
+            "tokens_remaining": usage.tokens_remaining,
+            "needs_summarization": usage.needs_summarization
+        })
+        
         return jsonify(usage.to_dict())
     
     except Exception as e:
-        logger.error(f"❌ Context usage error: {e}")
+        import traceback
+        logger.error("Context usage calculation failed", {
+            "session_id": session_id,
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "stack_trace": traceback.format_exc()
+        })
         return jsonify({"error": str(e)}), 500
 
 

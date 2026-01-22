@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import VersionHistory from './VersionHistory';
 
 interface Model {
@@ -63,11 +64,11 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   // ========== QWEN MODELS ==========
   'qwen/qwen-2.5-72b-instruct': {
     capabilities: ['tools', 'streaming', 'long-context'],
-    notes: 'Tool-calling support, affordable & fast'
+    notes: 'Tool-calling support, günstig & schnell'
   },
   'qwen/qwen3-vl-30b-a3b-thinking': {
     capabilities: ['vision', 'tools', 'reasoning', 'streaming'],
-    notes: 'Native reasoning model with Vision!'
+    notes: 'Native reasoning model mit Vision!'
   },
   'qwen/qwq-32b-preview': {
     capabilities: ['tools', 'reasoning', 'streaming', 'long-context'],
@@ -85,25 +86,29 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   },
   'meta-llama/llama-3.2-90b-vision-instruct': {
     capabilities: ['vision', 'tools', 'streaming', 'long-context'],
-    notes: 'Llama with Vision'
+    notes: 'Llama mit Vision'
   },
   
   // ========== ANTHROPIC CLAUDE ==========
   'anthropic/claude-opus-4': {
     capabilities: ['vision', 'tools', 'streaming', 'long-context'],
-    notes: 'Best quality from Anthropic'
+    notes: 'Beste Qualität von Anthropic'
   },
   'anthropic/claude-opus-4.5': {
     capabilities: ['vision', 'tools', 'streaming', 'long-context'],
-    notes: 'Best quality from Anthropic'
+    notes: 'Beste Qualität von Anthropic'
   },
   'anthropic/claude-sonnet-4': {
     capabilities: ['vision', 'tools', 'streaming', 'reasoning', 'long-context'],
     notes: 'Extended Thinking support!'
   },
+  'anthropic/claude-sonnet-4.5': {
+    capabilities: ['vision', 'tools', 'streaming', 'reasoning', 'long-context'],
+    notes: 'Extended Thinking support! Newest Sonnet.'
+  },
   'anthropic/claude-3.5-sonnet': {
     capabilities: ['vision', 'tools', 'streaming', 'long-context'],
-    notes: 'Proven quality'
+    notes: 'Bewährte Qualität'
   },
   'anthropic/claude-3.5-sonnet:beta': {
     capabilities: ['vision', 'tools', 'streaming', 'reasoning', 'long-context'],
@@ -120,11 +125,11 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   },
   'anthropic/claude-haiku-4': {
     capabilities: ['vision', 'streaming', 'fast'],
-    notes: 'Fast but no tools'
+    notes: 'Schnell aber keine Tools'
   },
   'anthropic/claude-haiku-4.5': {
     capabilities: ['vision', 'streaming', 'fast'],
-    notes: 'Fast but NO TOOLS!'
+    notes: 'Schnell aber KEINE TOOLS!'
   },
   
   // ========== OPENAI ==========
@@ -134,7 +139,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   },
   'openai/gpt-4o-mini': {
     capabilities: ['vision', 'tools', 'streaming', 'fast', 'long-context'],
-    notes: 'Affordable GPT-4o variant'
+    notes: 'Günstige GPT-4o Variante'
   },
   'openai/gpt-4-turbo': {
     capabilities: ['vision', 'tools', 'streaming', 'long-context']
@@ -163,7 +168,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   // ========== DEEPSEEK ==========
   'deepseek/deepseek-chat': {
     capabilities: ['tools', 'streaming', 'long-context', 'fast'],
-    notes: 'Very efficient'
+    notes: 'Sehr effizient'
   },
   'deepseek/deepseek-coder': {
     capabilities: ['tools', 'streaming', 'long-context'],
@@ -196,7 +201,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   },
   'x-ai/grok-vision-beta': {
     capabilities: ['vision', 'tools', 'streaming', 'long-context'],
-    notes: 'Grok with Vision'
+    notes: 'Grok mit Vision'
   },
   
   // ========== PERPLEXITY ==========
@@ -211,44 +216,58 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
 };
 
 // 🎨 CAPABILITY ICONS & LABELS
-const CAPABILITY_CONFIG: Record<ModelCapability, { icon: string; label: string; color: string; description: string }> = {
+// Note: Labels and descriptions are now translated via i18n in the component
+const CAPABILITY_CONFIG: Record<ModelCapability, { icon: string; labelKey: string; color: string; descriptionKey: string }> = {
   vision: {
     icon: '👁️',
-    label: 'Vision',
+    labelKey: 'modelInfo.capabilities.vision.label',
     color: 'text-blue-400',
-    description: 'Kann Bilder analysieren und verstehen'
+    descriptionKey: 'modelInfo.capabilities.vision.description'
   },
   tools: {
     icon: '🛠️',
-    label: 'Tools',
+    labelKey: 'modelInfo.capabilities.tools.label',
     color: 'text-purple-400',
-    description: 'Supports Function Calling (Memory, Discord, etc.)'
+    descriptionKey: 'modelInfo.capabilities.tools.description'
   },
   reasoning: {
     icon: '🧠',
-    label: 'Reasoning',
+    labelKey: 'modelInfo.capabilities.reasoning.label',
     color: 'text-pink-400',
-    description: 'Extended Thinking / Chain-of-Thought'
+    descriptionKey: 'modelInfo.capabilities.reasoning.description'
   },
   streaming: {
     icon: '⚡',
-    label: 'Stream',
+    labelKey: 'modelInfo.capabilities.streaming.label',
     color: 'text-yellow-400',
-    description: 'Real-time response streaming'
+    descriptionKey: 'modelInfo.capabilities.streaming.description'
   },
   'long-context': {
     icon: '📚',
-    label: 'Long Context',
+    labelKey: 'modelInfo.capabilities.longContext.label',
     color: 'text-green-400',
-    description: 'Large context windows (128k+)'
+    descriptionKey: 'modelInfo.capabilities.longContext.description'
   },
   fast: {
     icon: '🚀',
-    label: 'Fast',
+    labelKey: 'modelInfo.capabilities.fast.label',
     color: 'text-orange-400',
-    description: 'Very fast response times'
+    descriptionKey: 'modelInfo.capabilities.fast.description'
   }
 };
+
+// 🎨 Helper function for filter selected state classes
+function getFilterSelectedClass(colorClass: string): string {
+  const colorMap: Record<string, string> = {
+    'text-blue-400': 'bg-blue-500/20 border-blue-500/50',
+    'text-purple-400': 'bg-purple-500/20 border-purple-500/50',
+    'text-pink-400': 'bg-pink-500/20 border-pink-500/50',
+    'text-yellow-400': 'bg-yellow-500/20 border-yellow-500/50',
+    'text-green-400': 'bg-green-500/20 border-green-500/50',
+    'text-orange-400': 'bg-orange-500/20 border-orange-500/50',
+  };
+  return colorMap[colorClass] || 'bg-purple-500/20 border-purple-500/50';
+}
 
 // 💰 MODEL PRICING DATABASE (Updated Nov 2024)
 const MODEL_PRICING: Record<string, ModelPricing> = {
@@ -263,7 +282,7 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     inputCostPer1M: 0.075,
     outputCostPer1M: 0.30,
     rating: 'cheap',
-    notes: 'Very affordable & fast'
+    notes: 'Sehr günstig & schnell'
   },
   'google/gemini-pro-1.5': {
     inputCostPer1M: 1.25,
@@ -276,13 +295,13 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     inputCostPer1M: 0.35,
     outputCostPer1M: 0.40,
     rating: 'cheap',
-    notes: 'Very affordable, good quality!'
+    notes: 'Sehr günstig, gute Qualität!'
   },
   'qwen/qwen3-vl-30b-a3b-thinking': {
     inputCostPer1M: 0.20,
     outputCostPer1M: 1.00,
     rating: 'cheap',
-    notes: 'Native Reasoning with Vision!'
+    notes: 'Native Reasoning mit Vision!'
   },
   'qwen/qwq-32b-preview': {
     inputCostPer1M: 0.20,
@@ -296,13 +315,13 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     inputCostPer1M: 0.35,
     outputCostPer1M: 0.40,
     rating: 'cheap',
-    notes: 'Open-source, affordable'
+    notes: 'Open-source, günstig'
   },
   'meta-llama/llama-3.1-405b-instruct': {
     inputCostPer1M: 2.70,
     outputCostPer1M: 2.70,
     rating: 'moderate',
-    notes: 'Largest Llama model'
+    notes: 'Größtes Llama Model'
   },
   'meta-llama/llama-3.2-90b-vision-instruct': {
     inputCostPer1M: 0.90,
@@ -316,7 +335,7 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     inputCostPer1M: 3.00,
     outputCostPer1M: 15.00,
     rating: 'moderate',
-    notes: 'Great price-performance ratio'
+    notes: 'Gutes Preis-Leistungs-Verhältnis'
   },
   'anthropic/claude-3.5-sonnet:beta': {
     inputCostPer1M: 3.00,
@@ -328,7 +347,7 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     inputCostPer1M: 15.00,
     outputCostPer1M: 75.00,
     rating: 'very-expensive',
-    notes: 'Old generation, expensive'
+    notes: 'Alte Generation, teuer'
   },
   'anthropic/claude-3-sonnet': {
     inputCostPer1M: 3.00,
@@ -339,19 +358,19 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     inputCostPer1M: 0.25,
     outputCostPer1M: 1.25,
     rating: 'cheap',
-    notes: 'Old generation, affordable'
+    notes: 'Alte Generation, günstig'
   },
   'anthropic/claude-haiku-4': {
     inputCostPer1M: 0.80,
     outputCostPer1M: 4.00,
     rating: 'moderate',
-    notes: 'Fast but no tools support'
+    notes: 'Schnell aber keine Tools'
   },
   'anthropic/claude-haiku-4.5': {
     inputCostPer1M: 1.00,
     outputCostPer1M: 5.00,
     rating: 'moderate',
-    notes: '⚠️ No tool support!'
+    notes: '⚠️ Keine Tool-Unterstützung!'
   },
   'anthropic/claude-sonnet-4': {
     inputCostPer1M: 3.00,
@@ -363,13 +382,13 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     inputCostPer1M: 15.00,
     outputCostPer1M: 75.00,
     rating: 'very-expensive',
-    notes: 'Best quality, but expensive!'
+    notes: 'Beste Qualität, aber teuer!'
   },
   'anthropic/claude-opus-4.5': {
     inputCostPer1M: 15.00,
     outputCostPer1M: 75.00,
     rating: 'very-expensive',
-    notes: 'Best quality, but expensive!'
+    notes: 'Beste Qualität, aber teuer!'
   },
   
   // ========== OPENAI MODELS ==========
@@ -383,7 +402,7 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     inputCostPer1M: 0.15,
     outputCostPer1M: 0.60,
     rating: 'cheap',
-    notes: 'Affordable GPT-4o variant'
+    notes: 'Günstige GPT-4o Variante'
   },
   'openai/gpt-4-turbo': {
     inputCostPer1M: 10.00,
@@ -395,7 +414,7 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     inputCostPer1M: 0.50,
     outputCostPer1M: 1.50,
     rating: 'cheap',
-    notes: 'Old generation, affordable'
+    notes: 'Alte Generation, günstig'
   },
   'openai/o1': {
     inputCostPer1M: 15.00,
@@ -407,7 +426,7 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     inputCostPer1M: 3.00,
     outputCostPer1M: 12.00,
     rating: 'expensive',
-    notes: 'Reasoning model, more affordable'
+    notes: 'Reasoning model, günstiger'
   },
   'openai/o1-preview': {
     inputCostPer1M: 15.00,
@@ -429,7 +448,7 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     inputCostPer1M: 0.14,
     outputCostPer1M: 0.28,
     rating: 'cheap',
-    notes: 'Very affordable, good quality'
+    notes: 'Sehr günstig, gute Qualität'
   },
   'deepseek/deepseek-coder': {
     inputCostPer1M: 0.14,
@@ -464,7 +483,7 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     inputCostPer1M: 0.65,
     outputCostPer1M: 0.65,
     rating: 'cheap',
-    notes: 'Larger MoE model'
+    notes: 'Größeres MoE Model'
   },
   
   // ========== X.AI GROK ==========
@@ -478,7 +497,7 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     inputCostPer1M: 5.00,
     outputCostPer1M: 15.00,
     rating: 'expensive',
-    notes: 'Grok with Vision'
+    notes: 'Grok mit Vision'
   },
   
   // ========== PERPLEXITY ==========
@@ -534,7 +553,6 @@ function getModelPricing(model: Model): ModelPricing | null {
 // 🏆 GET QUALITY RATING FROM MODEL (Smart Heuristics)
 function getModelQuality(model: Model, pricing: ModelPricing | null): ModelQuality {
   const modelLower = model.id?.toLowerCase() || '';
-  const nameLower = model.name?.toLowerCase() || '';
   
   // Determine Quality Tier based on model family
   let tier: QualityTier = 'good';
@@ -613,44 +631,49 @@ function getModelQuality(model: Model, pricing: ModelPricing | null): ModelQuali
   };
 }
 
-// 🔥 GET CAPABILITIES FROM MODEL (Live API or Fallback Database)
+// 🔥 GET CAPABILITIES FROM MODEL (Live API data!)
 function getModelCapabilities(model: Model): ModelCapabilities | null {
-  // 1. Try to auto-detect from OpenRouter API data
   const detectedCaps: ModelCapability[] = [];
+  const modelLower = model.id?.toLowerCase() || '';
   
-  // Vision: Check modality field
-  if (model.architecture?.modality?.includes('image') || 
-      model.name?.toLowerCase().includes('vision') ||
-      model.id?.toLowerCase().includes('vision')) {
+  // 🎯 PRIORITY 1: Use REAL API data from OpenRouter!
+  const supportedParams = (model as any).supported_parameters as string[] | undefined;
+  const inputModalities = (model.architecture as any)?.input_modalities as string[] | undefined;
+  
+  // Vision: Check input_modalities from API
+  if (inputModalities?.includes('image') || 
+      model.architecture?.modality?.includes('image') ||
+      modelLower.includes('vision')) {
     detectedCaps.push('vision');
   }
   
-  // Tools: Most modern models support function calling (heuristic)
-  const modelLower = model.id?.toLowerCase() || '';
-  const hasToolSupport = 
-    modelLower.includes('gpt-4') ||
-    modelLower.includes('gpt-3.5') ||
-    modelLower.includes('claude') && !modelLower.includes('haiku') ||  // Haiku = no tools
-    modelLower.includes('gemini') ||
-    modelLower.includes('qwen') ||
-    modelLower.includes('llama-3') ||
-    modelLower.includes('mistral') ||
-    modelLower.includes('mixtral') ||
-    modelLower.includes('deepseek') ||
-    modelLower.includes('grok') ||
-    modelLower.includes('polaris');
-  
-  if (hasToolSupport) {
+  // Tools: Check supported_parameters from API
+  if (supportedParams?.includes('tools') || supportedParams?.includes('tool_choice')) {
     detectedCaps.push('tools');
+  } else {
+    // Fallback heuristic only if no API data
+    const hasToolSupport = 
+      modelLower.includes('gpt-4') ||
+      modelLower.includes('gpt-3.5') ||
+      modelLower.includes('claude') && !modelLower.includes('haiku') ||
+      modelLower.includes('gemini') ||
+      modelLower.includes('qwen') ||
+      modelLower.includes('llama-3') ||
+      modelLower.includes('mistral') ||
+      modelLower.includes('deepseek');
+    if (hasToolSupport) detectedCaps.push('tools');
   }
   
-  // Reasoning: Check model name/id
-  if (modelLower.includes('o1') || 
-      modelLower.includes('thinking') || 
-      modelLower.includes('reasoning') ||
-      modelLower.includes('qwq') ||
-      modelLower.includes('sonnet-4') ||  // Claude Sonnet 4 has extended thinking
-      modelLower.includes('sonnet:beta')) {
+  // 🧠 Reasoning: Check supported_parameters from API!
+  if (supportedParams?.includes('reasoning') || 
+      supportedParams?.includes('include_reasoning')) {
+    detectedCaps.push('reasoning');
+    console.log(`🧠 Model ${model.id} has REASONING from API!`);
+  } else if (modelLower.includes('o1') || 
+             modelLower.includes('thinking') || 
+             modelLower.includes('reasoning') ||
+             modelLower.includes('qwq')) {
+    // Fallback heuristic for reasoning
     detectedCaps.push('reasoning');
   }
   
@@ -671,12 +694,8 @@ function getModelCapabilities(model: Model): ModelCapabilities | null {
     detectedCaps.push('fast');
   }
   
-  // If we detected capabilities, return them
   if (detectedCaps.length > 0) {
-    return {
-      capabilities: detectedCaps,
-      notes: undefined
-    };
+    return { capabilities: detectedCaps, notes: undefined };
   }
   
   // 2. Fallback to hardcoded database
@@ -706,6 +725,7 @@ interface ModelSettingsProps {
 }
 
 export default function ModelSettings({ agentId = 'default' }: ModelSettingsProps) {
+  const { t } = useTranslation();
   const [models, setModels] = useState<Model[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [config, setConfig] = useState<ModelConfig | null>(null);
@@ -713,6 +733,8 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
   const [saving, setSaving] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [sortBy, setSortBy] = useState<'quality' | 'value' | 'price-low' | 'price-high' | 'name'>('quality');
+  const [selectedFilters, setSelectedFilters] = useState<Set<ModelCapability>>(new Set());
+  const [showFilters, setShowFilters] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [systemPrompt, setSystemPrompt] = useState<SystemPromptState>({
     text: '',
@@ -720,26 +742,15 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
     saving: false,
     expanded: false
   });
-  const [realAgentId, setRealAgentId] = useState<string>(agentId);  // Real UUID from backend!
+  // 🔥 Use agentId directly (it's already the correct ID from URL!)
+  // No need to fetch "real" ID - agentId from URL is the correct one
+  const displayAgentId = agentId || 'default';
 
   useEffect(() => {
     fetchModels();
     fetchConfig();
     fetchSystemPrompt();
-    fetchRealAgentId();
   }, [agentId]);
-
-  const fetchRealAgentId = async () => {
-    try {
-      const response = await fetch(`http://localhost:8284/api/agents/${agentId}`);
-      const data = await response.json();
-      if (data.id) {
-        setRealAgentId(data.id);  // Set real UUID!
-      }
-    } catch (error) {
-      console.error('Failed to fetch real agent ID:', error);
-    }
-  };
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -823,17 +834,60 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
   };
 
   const selectModel = (modelId: string) => {
-    updateConfig('model', modelId);
+    // Find the model to check capabilities
+    const selectedModel = models.find(m => m.id === modelId);
+    
+    // If it's an Ollama model, add the ollama: prefix
+    const finalModelId = selectedModel?.provider === 'ollama' 
+      ? `ollama:${modelId}` 
+      : modelId;
+    
+    // 🧠 AUTO-ENABLE REASONING: If model has reasoning capability, turn it on!
+    const capabilities = selectedModel ? getModelCapabilities(selectedModel) : null;
+    const hasReasoning = capabilities?.capabilities.includes('reasoning') || false;
+    
+    // Update model AND reasoning_enabled together
+    setConfig(prev => prev ? {
+      ...prev,
+      model: finalModelId,
+      reasoning_enabled: hasReasoning  // Auto-enable if model supports it!
+    } : prev);
+    
+    if (hasReasoning) {
+      console.log(`🧠 Auto-enabled reasoning for ${finalModelId}`);
+    }
+    
     setShowDropdown(false);
     setSearchQuery('');
   };
 
   // Filter and Sort models
   const filteredAndSortedModels = models
-    .filter(m =>
-      m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.id.toLowerCase().includes(searchQuery.toLowerCase())
-    )
+    .filter(m => {
+      // Search filter
+      const matchesSearch = 
+        m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        m.id.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      if (!matchesSearch) return false;
+      
+      // Capability filters (multi-select: model must have ALL selected capabilities)
+      if (selectedFilters.size > 0) {
+        const capabilities = getModelCapabilities(m);
+        if (!capabilities || capabilities.capabilities.length === 0) {
+          return false;
+        }
+        
+        // Check if model has ALL selected capabilities
+        for (const filter of selectedFilters) {
+          if (!capabilities.capabilities.includes(filter)) {
+            return false;
+          }
+        }
+      }
+      
+      return true;
+    })
     .sort((a, b) => {
       const pricingA = getModelPricing(a);
       const pricingB = getModelPricing(b);
@@ -899,11 +953,11 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
           <label className="text-xs font-medium text-gray-400">Agent ID</label>
           <div className="flex items-center gap-2">
             <code className="text-xs text-gray-500 font-mono truncate flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg">
-              {realAgentId}
+              {displayAgentId}
             </code>
             <button
               onClick={() => {
-                navigator.clipboard.writeText(realAgentId);
+                navigator.clipboard.writeText(displayAgentId);
                 // Visual feedback
                 const btn = document.activeElement as HTMLButtonElement;
                 if (btn) {
@@ -955,7 +1009,7 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
                 animate={{ opacity: 1, y: 0 }}
                 className="absolute z-50 w-full mt-2 bg-gray-800 border border-gray-700 rounded-lg shadow-xl overflow-hidden"
               >
-                {/* Search + Sort */}
+                {/* Search + Sort + Filters */}
                 <div className="p-3 border-b border-gray-700 space-y-2">
                   <input
                     type="text"
@@ -966,7 +1020,7 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
                     autoFocus
                   />
                   
-                  {/* Sort Selector */}
+                  {/* Sort + Filter Toggle */}
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-gray-500">Sort:</span>
                     <select
@@ -980,7 +1034,71 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
                       <option value="price-high">🔴 Most Expensive</option>
                       <option value="name">🔤 Name (A-Z)</option>
                     </select>
+                    
+                    {/* Filter Toggle Button */}
+                    <button
+                      onClick={() => setShowFilters(!showFilters)}
+                      className={`px-2 py-1.5 text-xs rounded-lg border transition-colors ${
+                        selectedFilters.size > 0
+                          ? 'bg-purple-500/20 border-purple-500/50 text-purple-400'
+                          : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-600'
+                      }`}
+                      title="Filter by capabilities"
+                    >
+                      🔍 Filter {selectedFilters.size > 0 && `(${selectedFilters.size})`}
+                    </button>
                   </div>
+                  
+                  {/* Capability Filters */}
+                  {showFilters && (
+                    <div className="pt-2 border-t border-gray-700">
+                      <div className="text-xs text-gray-500 mb-2">Filter by capabilities (multi-select):</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {(Object.keys(CAPABILITY_CONFIG) as ModelCapability[]).map((cap) => {
+                          const capConfig = CAPABILITY_CONFIG[cap];
+                          const isSelected = selectedFilters.has(cap);
+                          return (
+                            <label
+                              key={cap}
+                              className={`
+                                flex items-center gap-2 px-2 py-1.5 rounded-lg border cursor-pointer transition-colors
+                                ${isSelected
+                                  ? getFilterSelectedClass(capConfig.color)
+                                  : 'bg-gray-900 border-gray-700 hover:border-gray-600'
+                                }
+                              `}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={(e) => {
+                                  const newFilters = new Set(selectedFilters);
+                                  if (e.target.checked) {
+                                    newFilters.add(cap);
+                                  } else {
+                                    newFilters.delete(cap);
+                                  }
+                                  setSelectedFilters(newFilters);
+                                }}
+                                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-purple-500 focus:ring-purple-500 focus:ring-offset-gray-900"
+                              />
+                              <span className={`text-xs ${isSelected ? capConfig.color : 'text-gray-400'}`}>
+                                {capConfig.icon} {t(capConfig.labelKey)}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      {selectedFilters.size > 0 && (
+                        <button
+                          onClick={() => setSelectedFilters(new Set())}
+                          className="mt-2 text-xs text-gray-400 hover:text-gray-300 underline"
+                        >
+                          Clear filters
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Model List */}
@@ -1035,14 +1153,14 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
                                       <span
                                         key={cap}
                                         className="group relative"
-                                        title={capConfig.description}
+                                        title={t(capConfig.descriptionKey)}
                                       >
                                         <span className={`text-xs ${capConfig.color} cursor-help`}>
                                           {capConfig.icon}
                                         </span>
                                         {/* Tooltip on hover */}
                                         <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                                          {capConfig.label}: {capConfig.description}
+                                          {t(capConfig.labelKey)}: {t(capConfig.descriptionKey)}
                                         </span>
                                       </span>
                                     );
@@ -1104,48 +1222,48 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
                 bg: 'bg-green-500/10',
                 text: 'text-green-400',
                 border: 'border-green-500/20',
-                label: 'FREE',
+                labelKey: 'modelInfo.pricing.free',
                 icon: '🎉'
               },
               'cheap': {
                 bg: 'bg-emerald-500/10',
                 text: 'text-emerald-400',
                 border: 'border-emerald-500/20',
-                label: 'CHEAP',
+                labelKey: 'modelInfo.pricing.cheap',
                 icon: '💚'
               },
               'moderate': {
                 bg: 'bg-yellow-500/10',
                 text: 'text-yellow-400',
                 border: 'border-yellow-500/20',
-                label: 'MODERATE',
+                labelKey: 'modelInfo.pricing.moderate',
                 icon: '💛'
               },
               'expensive': {
                 bg: 'bg-orange-500/10',
                 text: 'text-orange-400',
                 border: 'border-orange-500/20',
-                label: 'EXPENSIVE',
+                labelKey: 'modelInfo.pricing.expensive',
                 icon: '🧡'
               },
               'very-expensive': {
                 bg: 'bg-red-500/10',
                 text: 'text-red-400',
                 border: 'border-red-500/20',
-                label: 'VERY EXPENSIVE',
+                labelKey: 'modelInfo.pricing.veryExpensive',
                 icon: '🔴'
               }
             };
 
             const ratingCfg = ratingConfig[pricing.rating];
 
-            // Quality tier config
+            // Quality tier config (colors only, labels via i18n)
             const tierConfig = {
-              flagship: { label: '🏆 Flagship', color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
-              premium: { label: '💎 Premium', color: 'text-purple-400', bg: 'bg-purple-500/10' },
-              good: { label: '✨ Good', color: 'text-blue-400', bg: 'bg-blue-500/10' },
-              budget: { label: '💚 Budget', color: 'text-green-400', bg: 'bg-green-500/10' },
-              experimental: { label: '🧪 Experimental', color: 'text-orange-400', bg: 'bg-orange-500/10' }
+              flagship: { color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
+              premium: { color: 'text-purple-400', bg: 'bg-purple-500/10' },
+              good: { color: 'text-blue-400', bg: 'bg-blue-500/10' },
+              budget: { color: 'text-green-400', bg: 'bg-green-500/10' },
+              experimental: { color: 'text-orange-400', bg: 'bg-orange-500/10' }
             };
 
             return (
@@ -1165,11 +1283,11 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
                         </div>
                         {/* Tier Label */}
                         <span className={`text-xs font-bold ${tierConfig[quality.tier].color}`}>
-                          {tierConfig[quality.tier].label}
+                          {t(`modelInfo.quality.tier.${quality.tier}`)}
                         </span>
                         {/* Value Score */}
-                        <div className="ml-auto flex items-center gap-1" title={`Value Score: ${quality.valueScore}/100 (Quality/Price Ratio)`}>
-                          <span className="text-xs text-gray-500">Value:</span>
+                        <div className="ml-auto flex items-center gap-1" title={t('modelInfo.quality.valueScoreTooltip', { score: quality.valueScore })}>
+                          <span className="text-xs text-gray-500">{t('modelInfo.quality.value')}:</span>
                           <span className={`text-xs font-bold ${
                             quality.valueScore >= 80 ? 'text-green-400' :
                             quality.valueScore >= 60 ? 'text-blue-400' :
@@ -1184,12 +1302,19 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
                     {/* PRICE RATING */}
                     <div className="flex items-center gap-2 mb-1">
                       <span className={`text-xs font-bold ${ratingCfg.text}`}>
-                        {ratingCfg.icon} {ratingCfg.label}
+                        {ratingCfg.icon} {t(ratingCfg.labelKey)}
                       </span>
                     </div>
                     <div className="text-xs text-gray-400 space-y-0.5">
-                      <div>Input: ${pricing.inputCostPer1M.toFixed(2)} / 1M tokens</div>
-                      <div>Output: ${pricing.outputCostPer1M.toFixed(2)} / 1M tokens</div>
+                      <div>{t('modelInfo.pricing.input')}: ${pricing.inputCostPer1M.toFixed(2)} / 1M tokens</div>
+                      <div>{t('modelInfo.pricing.output')}: ${pricing.outputCostPer1M.toFixed(2)} / 1M tokens</div>
+                      {/* 📚 CONTEXT WINDOW */}
+                      {currentModelData?.context_length && (
+                        <div className="flex items-center gap-1 mt-1">
+                          <span className="text-purple-400">📚</span>
+                          <span>{t('modelInfo.pricing.context')}: {(currentModelData.context_length / 1000).toFixed(0)}K tokens</span>
+                        </div>
+                      )}
                       {pricing.notes && (
                         <div className={`mt-1.5 ${ratingCfg.text} font-medium`}>
                           {pricing.notes}
@@ -1200,7 +1325,7 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
                     {/* 🎯 CAPABILITIES */}
                     {capabilities && capabilities.capabilities.length > 0 && (
                       <div className="mt-2 pt-2 border-t border-gray-700/50">
-                        <div className="text-xs font-medium text-gray-400 mb-1.5">Capabilities:</div>
+                        <div className="text-xs font-medium text-gray-400 mb-1.5">{t('modelInfo.capabilities.title')}:</div>
                         <div className="flex flex-wrap gap-2">
                           {capabilities.capabilities.map((cap) => {
                             const capConfig = CAPABILITY_CONFIG[cap];
@@ -1208,15 +1333,15 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
                               <div
                                 key={cap}
                                 className="group relative flex items-center gap-1 px-2 py-1 bg-gray-800/50 rounded-md border border-gray-700/50"
-                                title={capConfig.description}
+                                title={t(capConfig.descriptionKey)}
                               >
                                 <span className="text-xs">{capConfig.icon}</span>
                                 <span className={`text-xs ${capConfig.color} font-medium`}>
-                                  {capConfig.label}
+                                  {t(capConfig.labelKey)}
                                 </span>
                                 {/* Tooltip on hover */}
                                 <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-1.5 bg-gray-900 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-lg">
-                                  {capConfig.description}
+                                  {t(capConfig.descriptionKey)}
                                   <span className="absolute top-full left-1/2 transform -translate-x-1/2 -mt-1 border-4 border-transparent border-t-gray-900"></span>
                                 </span>
                               </div>
@@ -1232,52 +1357,60 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
             );
           })()}
           
-          {/* Save Model Button - Saves to DB + .env! */}
+        </div>
+
+        {/* 🔥 PROMINENT SAVE BUTTON - Saves Model, Context Window, Temperature, Top P, etc. */}
+        <div className="sticky top-0 z-10 bg-gray-900/95 backdrop-blur-sm pb-3 -mx-4 px-4 border-b border-gray-800 mb-4">
           <button
             onClick={async () => {
               setSaving(true);
               try {
-                const response = await fetch(`http://localhost:8284/api/agents/${agentId}/config`, {
+                const targetAgentId = agentId || 'default';
+                console.log(`💾 Saving all config for agent: ${targetAgentId}`);
+                
+                const response = await fetch(`http://localhost:8284/api/agents/${targetAgentId}/config`, {
                   method: 'PUT',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ 
-                    model: config.model,
-                    context_window: config.context_window 
-                  })
+                  body: JSON.stringify(config)
                 });
                 
                 const result = await response.json();
                 
                 if (result.success) {
-                  // Show success feedback
-                  alert('✅ Model saved to DB + .env file!\n\nModel: ' + config.model + '\n\nPage will reload...');
+                  // Dispatch custom event to notify AgentSelector and Token Counter
+                  window.dispatchEvent(new CustomEvent('agentModelUpdated', {
+                    detail: { model: config.model, agentId: targetAgentId }
+                  }));
                   
-                  // Reload page to sync everything!
-                  window.location.reload();
+                  // Show success feedback
+                  alert('✅ All changes saved!\n\n• Model: ' + config.model + '\n• Context Window: ' + (config.context_window ?? 128000).toLocaleString() + '\n• Temperature: ' + (config.temperature ?? 0.7).toFixed(2) + '\n• Top P: ' + (config.top_p ?? 1.0).toFixed(2));
+                  
+                  // Refresh the config to show updated values
+                  await fetchConfig();
                 } else {
                   throw new Error('Save failed');
                 }
               } catch (error) {
-                console.error('Failed to save model:', error);
-                alert('❌ Failed to save model!');
+                console.error('Failed to save config:', error);
+                alert('❌ Failed to save changes!');
               } finally {
                 setSaving(false);
               }
             }}
             disabled={saving}
-            className="w-full mt-3 px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
+            className="w-full px-4 py-3 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 disabled:from-gray-700 disabled:to-gray-800 text-white rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 disabled:shadow-none"
           >
             {saving ? (
               <>
-                <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Saving Model...
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <span>Saving Changes...</span>
               </>
             ) : (
               <>
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
-                Save Model (DB + .env)
+                <span>💾 Save All Changes</span>
               </>
             )}
           </button>
@@ -1305,13 +1438,48 @@ export default function ModelSettings({ agentId = 'default' }: ModelSettingsProp
           </div>
         </div>
 
-        {/* Context Window */}
-        <div className="space-y-2">
-          <label className="text-xs font-medium text-gray-400">Context Window</label>
-          <div className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-400">
-            {(config.context_window ?? 128000).toLocaleString()} tokens
-          </div>
-        </div>
+        {/* Context Window - Slider with Model Max Limit */}
+        {(() => {
+          // Get current model to determine max context window
+          const currentModelData = models.find(m => m.id === config.model);
+          const maxContextWindow = currentModelData?.context_length || 128000; // Fallback to 128k if not found
+          const currentContextWindow = config.context_window ?? maxContextWindow;
+          
+          // Format number for display (e.g., "128K" instead of "128,000")
+          const formatContextWindow = (value: number): string => {
+            if (value >= 1000000) {
+              return `${(value / 1000000).toFixed(1)}M`;
+            } else if (value >= 1000) {
+              return `${(value / 1000).toFixed(0)}K`;
+            }
+            return value.toString();
+          };
+          
+          return (
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-gray-400 flex items-center justify-between">
+                <span>{t('modelSettings.contextWindow')}</span>
+                <span className="text-purple-400">{formatContextWindow(currentContextWindow)} {t('modelSettings.tokens')}</span>
+              </label>
+              <input
+                type="range"
+                min="1000"
+                max={maxContextWindow}
+                step="1000"
+                value={currentContextWindow}
+                onChange={(e) => updateConfig('context_window', parseInt(e.target.value))}
+                className="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+              />
+              <div className="flex justify-between text-xs text-gray-600">
+                <span>1K</span>
+                <span className="text-purple-400">{t('modelSettings.max')}: {formatContextWindow(maxContextWindow)}</span>
+              </div>
+              <p className="text-xs text-gray-600">
+                💡 {t('modelSettings.contextWindowHint', { modelName: currentModelData?.name || config.model, maxTokens: formatContextWindow(maxContextWindow) })}
+              </p>
+            </div>
+          );
+        })()}
 
         {/* Top P */}
         <div className="space-y-2">

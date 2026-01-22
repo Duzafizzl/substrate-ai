@@ -32,7 +32,7 @@ To use an example agent in your Substrate instance:
 ```bash
 # From the backend directory
 cd backend
-python letta_compat/import_agent.py ../examples/agents/alex.af
+python agent_compat/import_agent.py ../examples/agents/alex.af
 ```
 
 Or use the API endpoint:

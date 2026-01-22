@@ -8,7 +8,7 @@ interface ReasoningBlockProps {
 }
 
 /**
- * Letta-Style Reasoning Block
+ * Reasoning Block
  * Collapsible grey block showing AI's internal thinking process
  */
 const ReasoningBlock: React.FC<ReasoningBlockProps> = ({ thinking, duration = 0 }) => {

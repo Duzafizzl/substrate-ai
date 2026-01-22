@@ -18,8 +18,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Python lib (NOT frontend/src/lib!)
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -70,13 +71,27 @@ backups/
 htmlcov/
 .tox/
 
+# Test files with potentially sensitive data
+**/test_*.py
+**/tests/
+**/*_test.py
+
 # Temporary files
 tmp/
 temp/
 *.tmp
 
 # Personal data
-data/miu_full_identity.txt
+data/*_identity.txt
+data/*_private.txt
+
+# Private documentation
+IP_OVERVIEW.md
+
+# Cursor IDE debug logs (may contain personal paths)
+.cursor/
+.cursor/debug.log
+**/.cursor/debug.log
 
 # Build files
 *.pyc

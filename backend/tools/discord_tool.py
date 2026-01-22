@@ -1,5 +1,5 @@
 """
-UNIFIED DISCORD TOOL - Complete Discord Integration for Letta
+UNIFIED DISCORD TOOL - Complete Discord Integration
 ============================================================
 
 This tool combines core Discord functionality into one powerful tool:

@@ -9,7 +9,7 @@ Flask-CORS==4.0.0
 Flask-SocketIO==5.3.5      # WebSocket support for streaming
 python-socketio==5.10.0    # SocketIO core
 eventlet==0.36.1           # Async server for Flask-SocketIO
-gevent==24.2.1             # Alternative async (fallback)
+gevent>=24.11.0           # Alternative async (fallback) - Python 3.13 compatible
 
 # ============================================
 # API CLIENTS (Required)
@@ -30,10 +30,10 @@ ollama==0.1.7               # Official Ollama Python client
 # ============================================
 # DATA PROCESSING (Required)
 # ============================================
-pydantic==2.5.0             # Data validation
+pydantic>=2.9.0             # Data validation - Python 3.13 compatible
 python-dotenv==1.0.0        # Environment variable management
 demjson3==3.0.6             # Robust JSON parsing
-tiktoken==0.5.2             # Token counting for context window
+tiktoken>=0.8.0             # Token counting for context window - Python 3.13 compatible
 
 # ============================================
 # SYSTEM UTILITIES (Required)
@@ -43,7 +43,7 @@ psutil>=5.9.0               # System monitoring (health checks)
 # ============================================
 # DATABASE (Optional but Recommended)
 # ============================================
-psycopg2-binary==2.9.9      # PostgreSQL support
+psycopg2-binary>=2.9.10     # PostgreSQL support - Python 3.13 compatible
 neo4j==5.14.1               # Neo4j Graph DB (for Graph RAG)
 
 # ============================================

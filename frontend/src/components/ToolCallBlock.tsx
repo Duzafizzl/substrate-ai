@@ -10,7 +10,7 @@ interface ToolCallBlockProps {
 }
 
 /**
- * Letta-Style Tool Call Block
+ * Tool Call Block
  * Collapsible block showing tool execution with Input/Output tabs
  */
 const ToolCallBlock: React.FC<ToolCallBlockProps> = ({ 
@@ -32,7 +32,7 @@ const ToolCallBlock: React.FC<ToolCallBlockProps> = ({
     return JSON.stringify(data, null, 2);
   };
   
-  // Extract preview from tool input (Letta-style: show what's happening!)
+  // Extract preview from tool input (show what's happening!)
   const getToolPreview = (): string => {
     if (toolName === 'spotify_control') {
       const query = toolInput?.query || toolInput?.track_name || '';

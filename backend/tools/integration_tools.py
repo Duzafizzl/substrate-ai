@@ -19,7 +19,7 @@ from typing import Dict, Any
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import the actual tool implementations from Letta
+# Import the actual tool implementations
 from tools.discord_tool import discord_tool as _discord_tool
 from tools.spotify_control import spotify_control as _spotify_control
 from tools.web_search import web_search as _web_search
@@ -45,14 +45,18 @@ class IntegrationTools:
     The AI uses these to control Discord and Spotify!
     """
     
-    def __init__(self, cost_tracker: CostTracker = None):
+    def __init__(self, cost_tracker: CostTracker = None, postgres_manager=None):
         """Initialize integration tools."""
         # Initialize cost tools
         if cost_tracker:
             self.cost_tools = CostTools(cost_tracker)
+        elif postgres_manager:
+            # Create CostTracker with postgres_manager
+            self.cost_tools = CostTools(CostTracker(postgres_manager=postgres_manager))
         else:
-            # Fallback: create new cost tracker
-            self.cost_tools = CostTools(CostTracker())
+            # No cost tracking available without PostgreSQL
+            self.cost_tools = None
+            print("⚠️ Cost tools disabled - PostgreSQL required")
         
         # Initialize FREE search tools (no API key!)
         try:

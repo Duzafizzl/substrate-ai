@@ -7,7 +7,7 @@ Tracks token usage across:
 - Tool schemas
 - Conversation history
 
-Just like Letta, but CLEARER! 🎯
+Clear context window visibility! 🎯
 """
 
 import tiktoken
@@ -47,7 +47,7 @@ class ContextWindowCalculator:
     """
     Calculate token usage for context window management.
     
-    Like Letta, but with BETTER visibility!
+    Clear token tracking with GREAT visibility!
     """
     
     def __init__(self, model: str = "gpt-4", summarization_threshold: float = 0.80):
@@ -184,7 +184,7 @@ class ContextWindowCalculator:
         """
         Format usage as human-readable string.
         
-        Like Letta's "21.77k of 131.07k tokens (83% left)"
+        Format: "21.77k of 131.07k tokens (83% left)"
         """
         def format_count(count: int) -> str:
             if count >= 1000:

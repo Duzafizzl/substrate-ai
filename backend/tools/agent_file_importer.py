@@ -3,10 +3,10 @@
 Agent File Importer for Substrate AI
 
 Imports .af (agent files) with full version management!
-Compatible with Letta .af export format for interoperability.
+Compatible with .af export format for interoperability.
 
 Features:
-- Parses .af format (Letta-compatible)
+- Parses .af format (standard agent file)
 - Extracts agents, memory blocks, messages
 - Creates versions in version manager
 - Imports into PostgreSQL (if available)
@@ -38,7 +38,7 @@ class AgentFileImporter:
     """
     Import .af agent files with full version management!
     
-    Compatible with Letta .af export format for interoperability.
+    Compatible with .af export format for interoperability.
     
     Handles:
     - Agent configuration
@@ -63,29 +63,25 @@ class AgentFileImporter:
         Initialize importer.
         
         Args:
-            state_manager: SQLite state manager
-            version_manager: Version manager for tracking
-            postgres_manager: PostgreSQL manager (optional)
+            state_manager: State manager (PostgreSQL-backed)
+            version_manager: Version manager for tracking (PostgreSQL-backed)
+            postgres_manager: PostgreSQL manager (REQUIRED)
         """
-        self.state_manager = state_manager or StateManager()
-        self.version_manager = version_manager or VersionManager()
+        if not postgres_manager:
+            raise ValueError("PostgresManager is REQUIRED!")
         self.postgres_manager = postgres_manager
+        self.state_manager = state_manager
+        # VersionManager now requires postgres_manager!
+        self.version_manager = version_manager or VersionManager(postgres_manager=postgres_manager)
         
-        # If PostgreSQL available, create message manager
-        self.message_manager = None
-        self.memory_engine = None
-        if self.postgres_manager:
-            self.message_manager = PersistentMessageManager(self.postgres_manager)
-            self.memory_engine = MemoryCoherenceEngine(
-                self.postgres_manager,
-                self.message_manager
-            )
+        # Create message manager
+        self.message_manager = PersistentMessageManager(self.postgres_manager)
+        self.memory_engine = MemoryCoherenceEngine(
+            self.postgres_manager,
+            self.message_manager
+        )
         
-        print("✅ Agent File Importer initialized")
-        if self.postgres_manager:
-            print("   PostgreSQL: ENABLED")
-        else:
-            print("   PostgreSQL: DISABLED (using SQLite only)")
+        print("✅ Agent File Importer initialized (PostgreSQL-only)")
     
     def load_agent_file(self, file_path: str) -> Dict[str, Any]:
         """
@@ -115,9 +111,9 @@ class AgentFileImporter:
     
     def extract_agent_info(self, agent_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Extract agent information from Letta format.
+        Extract agent information from .af format.
         
-        Converts Letta agent structure to our format.
+        Converts agent file structure to our format.
         """
         name = agent_data.get('name', 'Unknown Agent')
         
@@ -127,7 +123,7 @@ class AgentFileImporter:
         # Extract memory blocks
         memory_blocks = {}
         
-        # Letta stores blocks in a separate blocks array
+        # Blocks stored in a separate blocks array
         block_ids = agent_data.get('block_ids', [])
         
         # For now, create default blocks (will be filled from blocks array)
@@ -163,9 +159,9 @@ class AgentFileImporter:
         all_blocks: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        Map Letta block IDs to memory blocks.
+        Map block IDs to memory blocks.
         
-        Letta stores blocks separately with IDs - we need to link them.
+        Blocks stored separately with IDs - we need to link them.
         """
         memory_blocks = {}
         
@@ -302,7 +298,7 @@ class AgentFileImporter:
             role = msg.get('role', 'user')
             content = msg.get('content', '')
             
-            # Handle list content (Letta sometimes stores as list)
+            # Handle list content (sometimes stored as list)
             if isinstance(content, list):
                 content = '\n'.join(str(c) for c in content if c)
             elif not isinstance(content, str):
@@ -338,6 +334,15 @@ class AgentFileImporter:
                 agent_name=agent_info['name']
             )
             
+            # If this is ALEX, initialize Alex-specific start memory blocks
+            if agent_info['name'].upper() == "ALEX" or "alex" in agent_info['name'].lower():
+                try:
+                    self.memory_engine.initialize_alex_start_memory(agent_id)
+                except Exception as e:
+                    print(f"⚠️  Failed to initialize Alex start memory: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
             # Update core memory with imported data
             for label, block in memory_blocks.items():
                 if label in ['persona', 'human']:
@@ -358,13 +363,13 @@ class AgentFileImporter:
                 role = msg.get('role', 'user')
                 content = msg.get('content', '')
                 
-                # Handle list content (Letta sometimes stores as list)
+                # Handle list content (sometimes stored as list)
                 if isinstance(content, list):
                     content = '\n'.join(str(c) for c in content if c)
                 elif not isinstance(content, str):
                     content = str(content)
                 
-                # Map Letta roles to our roles
+                # Map roles to our format
                 if role == 'function':
                     role = 'tool'
                 
@@ -434,7 +439,7 @@ class AgentFileImporter:
 def main():
     """Command-line interface for agent file importer"""
     parser = argparse.ArgumentParser(
-        description='🏴‍☠️ Import Letta agent files (.af) with version management'
+        description='Import agent files (.af) with version management'
     )
     
     parser.add_argument(
@@ -466,20 +471,18 @@ def main():
     )
     
     parser.add_argument(
-        '--no-postgres',
-        action='store_true',
-        help='Skip PostgreSQL import (SQLite only)'
     )
     
     args = parser.parse_args()
     
-    # Initialize managers
-    state_manager = StateManager()
-    version_manager = VersionManager()
+    # Initialize managers - PostgreSQL REQUIRED!
+    postgres_manager = create_postgres_manager_from_env()
+    if not postgres_manager:
+        print("❌ PostgreSQL is REQUIRED! Configure .env and ensure PostgreSQL is running.")
+        exit(1)
     
-    postgres_manager = None
-    if not args.no_postgres:
-        postgres_manager = create_postgres_manager_from_env()
+    state_manager = StateManager(postgres_manager=postgres_manager)
+    version_manager = VersionManager(postgres_manager=postgres_manager)
     
     # Create importer
     importer = AgentFileImporter(

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Conversation History API Routes
-Provides access to the agent's complete conversation history
+PostgreSQL-ONLY - No SQLite fallbacks!
 """
 
 from flask import Blueprint, jsonify, request
 import logging
-import asyncio
+import json
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -14,18 +14,31 @@ logger = logging.getLogger(__name__)
 # Create blueprint
 conversation_bp = Blueprint('conversation', __name__)
 
-# Global state manager (will be set by init function)
-_state_manager = None
-_consciousness_loop = None
+# Global managers (will be set by init function)
 _postgres_manager = None
+_consciousness_loop = None
 
 
-def init_conversation_routes(state_manager, consciousness_loop=None, postgres_manager=None):
+def init_conversation_routes(state_manager=None, consciousness_loop=None, postgres_manager=None):
     """Initialize conversation routes with dependencies"""
-    global _state_manager, _consciousness_loop, _postgres_manager
-    _state_manager = state_manager
-    _consciousness_loop = consciousness_loop
+    global _postgres_manager, _consciousness_loop
     _postgres_manager = postgres_manager
+    _consciousness_loop = consciousness_loop
+    
+    if not _postgres_manager:
+        logger.warning("⚠️  PostgresManager not provided - conversation routes may fail!")
+
+
+def _get_active_agent_id():
+    """Get the first active agent's ID from PostgreSQL"""
+    if not _postgres_manager:
+        raise Exception("PostgreSQL not available")
+    
+    agents = _postgres_manager.get_all_agents()
+    if not agents:
+        raise Exception("No agents found in PostgreSQL")
+    
+    return agents[0].id
 
 
 @conversation_bp.route('/api/conversation/<session_id>', methods=['GET'])
@@ -43,66 +56,76 @@ def get_conversation(session_id='default'):
     Returns:
         {
             "session_id": "default",
-            "messages": [
-                {"role": "user", "content": "...", "timestamp": "..."},
-                {"role": "assistant", "content": "...", "timestamp": "..."}
-            ],
+            "messages": [...],
             "total": 42
         }
     """
     try:
+        if not _postgres_manager:
+            return jsonify({'error': 'PostgreSQL not available'}), 503
+        
         limit = int(request.args.get('limit', 1000))
         offset = int(request.args.get('offset', 0))
         
-        # 🏴‍☠️ POSTGRESQL-FIRST: Try PostgreSQL, fallback to SQLite
-        messages = []
+        # Get agent ID
+        agent_id = _get_active_agent_id()
         
-        if _postgres_manager:
-            # Get agent ID (hardcoded for now, should be dynamic)
-            agent_id = '41dc0e38-bdb6-4563-a3b6-49aa0925ab14'
+        # Get messages from PostgreSQL
+        pg_messages = _postgres_manager.get_messages(
+            agent_id=agent_id,
+            session_id=session_id,
+            limit=limit
+        )
+        
+        # Convert to frontend format
+        messages = []
+        for msg in pg_messages:
+            # Parse metadata if it's a string
+            metadata = msg.metadata
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except:
+                    metadata = {}
+            elif metadata is None:
+                metadata = {}
             
-            try:
-                # Get messages from PostgreSQL
-                pg_messages = _postgres_manager.get_messages(
-                    agent_id=agent_id,
-                    session_id=session_id,
-                    limit=limit
-                )
-                
-                # Convert to frontend format
-                messages = [
-                    {
-                        'role': msg.role,
-                        'content': msg.content,
-                        'timestamp': msg.created_at.isoformat() if msg.created_at else '',
-                        'tool_calls': msg.tool_calls,
-                        'thinking': msg.thinking
-                    }
-                    for msg in pg_messages
-                ]
-                
-                logger.info(f"📬 GET /conversation/{session_id} → {len(messages)} messages (PostgreSQL)")
-            except Exception as e:
-                logger.warning(f"PostgreSQL read failed, falling back to SQLite: {e}")
-                # Fallback to SQLite
-                if _state_manager:
-                    messages = _state_manager.get_conversation(
-                        session_id=session_id,
-                        limit=limit
-                    )
-        else:
-            # SQLite only
-            if not _state_manager:
-                return jsonify({'error': 'No database available'}), 500
+            # Parse tool_calls if it's a string
+            tool_calls = msg.tool_calls
+            if isinstance(tool_calls, str):
+                try:
+                    tool_calls = json.loads(tool_calls)
+                except:
+                    tool_calls = None
             
-            messages = _state_manager.get_conversation(
-                session_id=session_id,
-                limit=limit
-            )
+            # Ensure tool_calls is an array
+            if tool_calls and not isinstance(tool_calls, list):
+                if isinstance(tool_calls, dict):
+                    tool_calls = [tool_calls] if tool_calls else None
+                else:
+                    tool_calls = None
+            
+            # Extract message_type from metadata
+            message_type = metadata.get('message_type', 'system' if msg.role == 'system' else 'inbox')
+            reasoning_time = metadata.get('reasoning_time', 0)
+            
+            messages.append({
+                'id': msg.id,
+                'role': msg.role,
+                'content': msg.content,
+                'timestamp': msg.created_at.isoformat() if msg.created_at else '',
+                'message_type': message_type,
+                'tool_calls': tool_calls if tool_calls else [],
+                'thinking': msg.thinking,
+                'reasoning_time': reasoning_time,
+                'metadata': metadata
+            })
         
         # Apply offset
         if offset > 0:
             messages = messages[offset:]
+        
+        logger.info(f"📬 GET /conversation/{session_id} → {len(messages)} messages (PostgreSQL)")
         
         return jsonify({
             'session_id': session_id,
@@ -111,7 +134,7 @@ def get_conversation(session_id='default'):
         })
         
     except Exception as e:
-        logger.error(f"Error getting conversation: {e}")
+        logger.error(f"Error getting conversation: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -123,29 +146,55 @@ def clear_conversation(session_id='default'):
     Args:
         session_id: Session ID to clear
         
+    Query params:
+        backend: Whether to clear backend storage (default: true)
+                 If false, only returns success for UI-only clear
+        
     Returns:
         {"success": true, "cleared": N}
     """
     try:
-        if not _state_manager:
-            return jsonify({'error': 'State manager not initialized'}), 500
+        # Check if this is a backend clear or UI-only clear
+        backend_clear = request.args.get('backend', 'true').lower() == 'true'
         
-        # Get current count
-        messages = _state_manager.get_conversation(session_id=session_id, limit=10000)
-        count = len(messages)
+        if not backend_clear:
+            # UI-only clear - just acknowledge
+            logger.info(f"🧹 POST /conversation/{session_id}/clear?backend=false → UI-only clear")
+            return jsonify({
+                'success': True,
+                'cleared': 0,
+                'message': 'UI cleared (backend data preserved)'
+            })
         
-        # Clear messages
-        _state_manager.clear_conversation(session_id=session_id)
+        if not _postgres_manager:
+            return jsonify({'error': 'PostgreSQL not available'}), 503
         
-        logger.warning(f"🗑️  POST /conversation/{session_id}/clear → Cleared {count} messages")
+        # Get agent ID
+        agent_id = _get_active_agent_id()
+        
+        # Count before delete
+        pg_messages = _postgres_manager.get_messages(
+            agent_id=agent_id,
+            session_id=session_id,
+            limit=100000
+        )
+        cleared_count = len(pg_messages)
+        
+        # Delete from PostgreSQL
+        _postgres_manager.delete_messages(
+            agent_id=agent_id,
+            session_id=session_id
+        )
+        
+        logger.warning(f"🗑️  POST /conversation/{session_id}/clear → Cleared {cleared_count} messages (PostgreSQL)")
         
         return jsonify({
             'success': True,
-            'cleared': count
+            'cleared': cleared_count
         })
         
     except Exception as e:
-        logger.error(f"Error clearing conversation: {e}")
+        logger.error(f"Error clearing conversation: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -153,9 +202,6 @@ def clear_conversation(session_id='default'):
 def trigger_summary(session_id='default'):
     """
     Manually trigger conversation summary generation.
-    
-    This allows users to create summaries on-demand, not just when
-    context window is >80% full.
     
     Args:
         session_id: Session ID to summarize
@@ -170,148 +216,84 @@ def trigger_summary(session_id='default'):
         }
     """
     try:
-        if not _state_manager:
-            return jsonify({'error': 'State manager not initialized'}), 500
+        if not _postgres_manager:
+            return jsonify({'error': 'PostgreSQL not available'}), 503
         
         if not _consciousness_loop:
             return jsonify({'error': 'Consciousness loop not initialized'}), 500
         
         logger.info(f"📝 POST /conversation/{session_id}/summarize → Manual summary trigger")
         
-        # Get all messages since last summary
-        latest_summary = _state_manager.get_latest_summary(session_id)
+        # Get agent ID
+        agent_id = _get_active_agent_id()
         
-        if latest_summary:
-            from_timestamp = datetime.fromisoformat(latest_summary['to_timestamp'])
-            logger.info(f"   Last summary: {latest_summary['created_at']}")
-            logger.info(f"   Summarizing messages after: {latest_summary['to_timestamp']}")
-        else:
-            from_timestamp = None
-            logger.info(f"   No previous summary - summarizing ALL messages")
+        # Get all messages for this session
+        all_messages = _postgres_manager.get_messages(
+            agent_id=agent_id,
+            session_id=session_id,
+            limit=100000
+        )
         
-        # Get messages to summarize
-        all_messages = _state_manager.get_conversation(session_id=session_id, limit=100000)
+        if not all_messages:
+            return jsonify({
+                'success': False,
+                'error': 'No messages to summarize'
+            }), 400
         
-        # Filter by timestamp if needed
+        # Convert to format for summary generator
         messages_to_summarize = []
         for msg in all_messages:
-            if from_timestamp and msg.timestamp <= from_timestamp:
-                continue  # Skip already summarized
-            
             messages_to_summarize.append({
                 'role': msg.role,
                 'content': msg.content,
-                'timestamp': msg.timestamp.isoformat() if hasattr(msg.timestamp, 'isoformat') else str(msg.timestamp)
+                'timestamp': msg.created_at.isoformat() if msg.created_at else ''
             })
-        
-        if not messages_to_summarize:
-            return jsonify({
-                'success': False,
-                'error': 'No new messages to summarize',
-                'message': 'All messages have already been summarized'
-            }), 400
         
         logger.info(f"📝 Summarizing {len(messages_to_summarize)} messages...")
         
-        # Generate summary using consciousness loop's summary generator
+        # Generate summary
         from core.summary_generator import SummaryGenerator
         
-        generator = SummaryGenerator(state_manager=_state_manager)
+        generator = SummaryGenerator(postgres_manager=_postgres_manager)
         summary_result = generator.generate_summary(
             messages=messages_to_summarize,
             session_id=session_id
         )
         
-        # Save summary to DB
+        # Add summary as system message
+        import uuid
+        summary_msg_id = f"msg-{uuid.uuid4()}"
+        
         from_ts = datetime.fromisoformat(summary_result['from_timestamp'])
         to_ts = datetime.fromisoformat(summary_result['to_timestamp'])
         
-        summary_id = _state_manager.save_summary(
-            session_id=session_id,
-            summary=summary_result['summary'],
-            from_timestamp=from_ts,
-            to_timestamp=to_ts,
-            message_count=summary_result['message_count'],
-            token_count=summary_result['token_count']
-        )
-        
-        # CRITICAL: Also add as SYSTEM MESSAGE to conversation!
-        # This way the agent can see it in context!
-        import uuid
-        summary_msg_id = f"msg-{uuid.uuid4()}"
-        _state_manager.add_message(
-            message_id=summary_msg_id,
-            session_id=session_id,
-            role='system',
-            content=summary_result['summary'],
-            message_type='system'  # Mark as system message (not inbox!)
-        )
-        logger.info(f"✅ Summary added as system message (id: {summary_msg_id})")
-        
-        # Save to Archive Memory
-        try:
-            from tools.memory_tools import MemoryTools
-            memory_tools = MemoryTools(_state_manager)
-            
-            archive_text = f"""📅 Chat Zusammenfassung ({from_ts.strftime('%d.%m.%Y %H:%M')} - {to_ts.strftime('%d.%m.%Y %H:%M')})
-
-{summary_result['summary']}
-
----
-📊 Stats: {summary_result['message_count']} Nachrichten zusammengefasst"""
-            
-            memory_tools.add_to_archive(
-                content=archive_text,
-                metadata={
-                    'type': 'conversation_summary',
-                    'session_id': session_id,
-                    'summary_id': summary_id,
-                    'from_timestamp': summary_result['from_timestamp'],
-                    'to_timestamp': summary_result['to_timestamp'],
-                    'message_count': summary_result['message_count']
-                }
-            )
-            logger.info(f"✅ Summary saved to Archive Memory!")
-        except Exception as e:
-            logger.warning(f"⚠️  Failed to save to Archive: {e}")
-        
-        # Save summary as System Message in messages table!
-        import uuid
-        summary_content = f"""📝 **ZUSAMMENFASSUNG** (Manuell erstellt)
+        summary_content = f"""📝 **ZUSAMMENFASSUNG**
 
 **Zeitraum:** {from_ts.strftime('%d.%m.%Y %H:%M')} - {to_ts.strftime('%d.%m.%Y %H:%M')}  
 **Nachrichten:** {summary_result['message_count']}
 
-{summary_result['summary']}
-
----
-📊 Diese Zusammenfassung umfasst {summary_result['message_count']} Nachrichten vom {from_ts.strftime('%d.%m.%Y %H:%M')} bis {to_ts.strftime('%d.%m.%Y %H:%M')}.
-
-💾 Vollständige Details: `search_archive()` oder `read_archive()`"""
+{summary_result['summary']}"""
         
-        summary_msg_id = f"msg-{uuid.uuid4()}"
-        _state_manager.add_message(
+        _postgres_manager.add_message(
             message_id=summary_msg_id,
+            agent_id=agent_id,
             session_id=session_id,
-            role="system",
+            role='system',
             content=summary_content,
-            message_type="system"
+            metadata={'message_type': 'system', 'is_summary': True}
         )
-        logger.info(f"✅ Summary saved to DB as system message (id: {summary_msg_id})")
+        
+        logger.info(f"✅ Summary saved (id: {summary_msg_id})")
         
         return jsonify({
             'success': True,
-            'summary_id': summary_id,
             'message_id': summary_msg_id,
             'message_count': summary_result['message_count'],
             'from_timestamp': summary_result['from_timestamp'],
             'to_timestamp': summary_result['to_timestamp'],
-            'token_count': summary_result['token_count']
+            'token_count': summary_result.get('token_count', 0)
         })
         
     except Exception as e:
-        logger.error(f"Error triggering summary: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error triggering summary: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
-

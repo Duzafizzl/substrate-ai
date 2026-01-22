@@ -155,7 +155,7 @@ class EmbeddingCache:
     - PostgreSQL = fast enough for misses
     - Batch generation = fewer API calls
     
-    This is why Letta feels SO RESPONSIVE!
+    This is why the system feels SO RESPONSIVE!
     
     Security:
     - LRU eviction (prevents memory bloat)
@@ -214,7 +214,7 @@ class EmbeddingCache:
     
     def get_embedding(self, text: str) -> List[float]:
         """
-        🏴‍☠️ THE MAGIC METHOD: Get embedding (cached or generated)
+        THE MAGIC METHOD: Get embedding (cached or generated)
         
         Three-tier lookup:
         1. Memory cache (instant)

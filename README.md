@@ -80,6 +80,7 @@ npm run dev
 - 🛠️ **Tool Execution** - Extensible tool architecture with built-in tools
 - 🔄 **Session Management** - Multi-session support with conversation history
 - 💰 **Cost Tracking** - Real-time token usage and cost monitoring
+- ⚡ **Token Optimized** - ~40% fewer context tokens via history limits + auto-summarization
 
 ### Advanced Features
 - 🧩 **MCP Integration** - Model Context Protocol for code execution & browser automation
@@ -90,12 +91,26 @@ npm run dev
 - 📈 **Token Efficiency** - 98.7% context window savings via MCP code execution
 - 🎨 **Modern UI** - React + TypeScript + Tailwind CSS
 
-### 🧠 Miras Memory Architecture (NEW!)
+### 🔄 Autonomous Agent Features (NEW!)
+- 💓 **Heartbeat System** - Timer-based agent activation with configurable rules
+- 📂 **Rooms/Channels** - Discord-style message organization (heartbeat-log, task, reflection)
+- 🗓️ **Task Scheduler** - Automatic task execution (daily, weekly, monthly, custom intervals)
+- 🏃 **Daemon Mode** - 24/7 agent runtime with in-memory caching
+
+### 🧠 Miras Memory Architecture
 Based on Google Research [Titans/Miras papers](https://research.google/blog/titans-miras-helping-ai-have-long-term-memory/):
 - 🔄 **Retention Gates** - Dynamic memory decay/boost based on access patterns
 - 👁️ **Attentional Bias** - Multi-factor scoring (semantic + temporal + importance + access)
 - 🏛️ **Hierarchical Memory** - 3-tier system (Working → Episodic → Semantic)
 - 📈 **Online Learning** - Hebbian associations + feedback learning during runtime
+
+### 💓 Heartbeat & Autonomous Agent System (NEW!)
+Always-on agent capabilities for 24/7 autonomous operation:
+- **Timer-based Heartbeats** - Configurable rules with time windows & probability
+- **Rooms/Channels** - Discord-style message organization with threads
+- **Task Scheduler** - Daily, weekly, monthly, or custom interval tasks
+- **Daemon Mode** - 24/7 runtime with hot agent caching
+- **DST-safe Timezone** - Europe/Berlin default with proper timezone handling
 
 ---
 
@@ -109,6 +124,7 @@ Based on Google Research [Titans/Miras papers](https://research.google/blog/tita
 ### Advanced Topics
 - **[MCP System Overview](MCP_SYSTEM_OVERVIEW.md)** - Code execution & browser automation architecture
 - **[Miras Memory Architecture](docs/MIRAS_TITANS_INTEGRATION.md)** - Research-backed memory system
+- **[Heartbeat & Rooms](IMPLEMENTATION_PLAN_HEARTBEAT_ROOMS.md)** - Autonomous agent features
 - **[PostgreSQL Setup](backend/POSTGRESQL_SETUP.md)** - Database configuration
 - **[Compatibility Guide](backend/COMPATIBILITY.md)** - System requirements
 
@@ -126,10 +142,11 @@ Based on Google Research [Titans/Miras papers](https://research.google/blog/tita
 │  • Real-time streaming UI                       │
 │  • Session management                           │
 │  • Memory blocks editor                         │
+│  • Rooms/Channels overview                      │
 │  • Cost & token tracking                        │
 └─────────────────┬───────────────────────────────┘
                   │
-                  │ HTTP/SSE
+                  │ HTTP/SSE/WebSocket
                   │
 ┌─────────────────▼───────────────────────────────┐
 │           Backend (Python)                       │
@@ -142,6 +159,14 @@ Based on Google Research [Titans/Miras papers](https://research.google/blog/tita
 │  │  • Memory integration                  │    │
 │  └────────────────────────────────────────┘    │
 │                                                  │
+│  ┌────────────────────────────────────────┐    │
+│  │     Daemon Mode (24/7 Runtime)         │    │
+│  │  • Timer-based heartbeat               │    │
+│  │  • Task scheduler                      │    │
+│  │  • In-memory agent caching             │    │
+│  │  • Graceful shutdown                   │    │
+│  └────────────────────────────────────────┘    │
+│                                                  │
 │  ┌─────────────┐  ┌─────────────┐             │
 │  │  Memory     │  │   Tools     │             │
 │  │  System     │  │  Registry   │             │
@@ -151,6 +176,15 @@ Based on Google Research [Titans/Miras papers](https://research.google/blog/tita
 │  │ • Embedding │  │ • Discord   │             │
 │  │ • Retention │  │ • ArXiv     │             │
 │  │ • Hebbian   │  │ • Jina      │             │
+│  └─────────────┘  └─────────────┘             │
+│                                                  │
+│  ┌─────────────┐  ┌─────────────┐             │
+│  │  Channels   │  │   Tasks     │             │
+│  │  (Rooms)    │  │  Scheduler  │             │
+│  │ • heartbeat │  │ • daily     │             │
+│  │ • task      │  │ • weekly    │             │
+│  │ • reflection│  │ • monthly   │             │
+│  │ • threads   │  │ • custom    │             │
 │  └─────────────┘  └─────────────┘             │
 │                                                  │
 │  ┌────────────────────────────────────────┐    │
@@ -237,6 +271,24 @@ Advanced memory features based on Google Research:
 - `/api/graph/stats` - Graph statistics
 - `/api/graph/rag` - Retrieve context from knowledge graph
 
+### Rooms/Channels
+- `/api/channels` - List/Create channels (rooms)
+- `/api/channels/<id>/messages` - Get/Post channel messages
+- `/api/messages/<id>/threads` - Discord-style thread system
+- Default channels: `heartbeat-log`, `task`, `reflection`
+
+### Task Scheduler
+- `/api/tasks` - List/Create scheduled tasks
+- `/api/tasks/<id>` - Get/Update/Delete task
+- Schedules: `daily`, `weekly`, `monthly`, `custom` (every N days)
+
+### Heartbeat System
+- `/api/heartbeat/config` - Get/Update heartbeat configuration
+- `/api/heartbeat/rules` - Manage heartbeat rules
+- `/api/heartbeat/status` - Daemon & agent status
+- `/api/heartbeat/trigger` - Manual heartbeat trigger (testing)
+- `/api/heartbeat/templates` - Predefined rule templates
+
 ### Browser Automation (MCP)
 - `navigate` - Browser navigation
 - `screenshot` - Capture with vision analysis
@@ -249,10 +301,12 @@ Advanced memory features based on Google Research:
 ## 📦 Installation
 
 ### Prerequisites
-- Python 3.11+
+- Python 3.11+ (3.11 or 3.12 recommended; 3.13 supported but may require additional setup)
 - Node.js 18+
 - PostgreSQL 14+ (optional, SQLite fallback available)
 - OpenRouter API key
+
+> **Note for Python 3.13 users**: Some packages may require newer versions. See [Python 3.13 Compatibility Guide](backend/PYTHON_3.13_COMPATIBILITY.md) for detailed instructions.
 
 ### Backend Setup
 
@@ -266,6 +320,9 @@ source venv/bin/activate  # Mac/Linux
 
 # Install dependencies
 pip install -r requirements.txt
+
+# If using Python 3.13 on Windows and encountering wheel issues, see:
+# backend/PYTHON_3.13_COMPATIBILITY.md
 
 # Configure environment
 cp config/.env.example .env
@@ -369,6 +426,12 @@ print(result['analysis'])
 - **With MCP:** ~2,000 tokens (98.7% reduction)
 - **Streaming:** <50ms first token latency
 
+### Context Optimization (v1.2.1)
+- **History Limit:** 12 messages (optimized from 20, ~40% fewer context tokens)
+- **Auto-Summary:** Triggers automatically when >30 messages accumulate
+- **Timeout:** 120s (allows large context window processing)
+- **Max Response:** 8192 tokens (full detailed responses, not clipped)
+
 ### Execution Speed
 - **Code compilation:** <50ms (RestrictedPython)
 - **Typical execution:** 200-500ms
@@ -415,6 +478,17 @@ cat ../TESTING_RESULTS.md
   - [x] Attentional Bias (multi-factor retrieval scoring)
   - [x] Hierarchical Memory (Working → Episodic → Semantic)
   - [x] Online Learning (Hebbian associations + feedback)
+- [x] **Autonomous Agent System** (January 2026)
+  - [x] Heartbeat System (timer-based with probability)
+  - [x] Rooms/Channels (Discord-style organization)
+  - [x] Task Scheduler (daily, weekly, monthly, custom)
+  - [x] Daemon Mode (24/7 runtime with agent caching)
+  - [x] DST-safe timezone handling
+- [x] **Context & Token Optimization** (January 2026)
+  - [x] Reduced history_limit (20 → 12) for ~40% token savings
+  - [x] Auto-summary trigger at >30 messages
+  - [x] Extended timeout (60s → 120s) for large contexts
+  - [x] Flexible max_completion_tokens (8192 default)
 
 ### In Progress 🚧
 - [ ] Additional MCP servers (filesystem, database)
@@ -488,7 +562,7 @@ Built with inspiration from:
 
 **Built for developers who need production-ready AI agents.**
 
-*Version 1.1.0 | Last Updated: December 2025*
+*Version 1.2.1 | Last Updated: January 2026*
 
 ---
 
@@ -570,5 +644,155 @@ learner.record_feedback('mem2', FeedbackType.NOT_HELPFUL)  # -0.2 importance
 
 📖 **Full documentation:** See [docs/MIRAS_TITANS_INTEGRATION.md](docs/MIRAS_TITANS_INTEGRATION.md)
 
+---
+
+## 💓 Heartbeat & Autonomous Agent System Details
+
+Always-on agent capabilities for 24/7 autonomous operation.
+
+### Daemon Mode
+**File:** `backend/core/daemon_mode.py`
+
+24/7 runtime with hot agent caching:
+- Agents stay in memory (no restart overhead!)
+- Connection pooling (PostgreSQL stays warm)
+- Graceful shutdown (no data loss)
+- Signal handling (SIGTERM, SIGINT)
+
+```python
+from core.daemon_mode import SubstrateAIDaemon, create_daemon_from_env
+
+# Create and start daemon
+daemon = create_daemon_from_env()
+daemon.start()
+
+# Load agent (stays in memory!)
+agent = daemon.get_or_create_agent("my-agent", "My Agent Name")
+
+# Check status
+daemon.print_status()
+```
+
+### Heartbeat System
+**File:** `backend/core/daemon_mode.py`
+
+Timer-based agent activation with configurable rules:
+
+```python
+# Example heartbeat configuration (stored in agent.config)
+heartbeat_config = {
+    "enabled": True,
+    "timezone": "Europe/Berlin",  # DST-safe!
+    "rules": [
+        {
+            "id": "rule-uuid",
+            "name": "Morning Check-in",
+            "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+            "start_time": "08:00",
+            "end_time": "12:00",
+            "interval_minutes": 60,
+            "probability": 0.8  # 80% chance to trigger when timer fires
+        },
+        {
+            "id": "rule-uuid-2",
+            "name": "Evening Reflection",
+            "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+            "start_time": "18:00",
+            "end_time": "20:00",
+            "interval_minutes": 45,
+            "probability": 0.9
+        }
+    ]
+}
+```
+
+**How it works:**
+1. Timer fires at random interval (50-100% of configured interval)
+2. Probability check determines if heartbeat triggers
+3. Heartbeat message sent to agent via ConsciousnessLoop
+4. Agent can respond, use tools, organize memories
+5. Messages posted to `heartbeat-log` channel AND main thread
+
+### Task Scheduler
+**File:** `backend/core/task_scheduler.py`
+
+Automatic task execution with multiple schedule types:
+
+```python
+from core.task_scheduler import TaskScheduler, calculate_next_run
+
+# Schedule types
+next_run = calculate_next_run('daily', '09:00')                    # Every day at 09:00
+next_run = calculate_next_run('weekly', '10:00', days_of_week=[0, 2, 4])  # Mon/Wed/Fri
+next_run = calculate_next_run('monthly', '12:00')                  # Monthly at 12:00
+next_run = calculate_next_run('custom', '08:00', every_n_days=3)   # Every 3 days
+
+# Task structure (stored in PostgreSQL)
+task = {
+    "task_name": "Daily Summary",
+    "description": "Generate daily activity summary",
+    "schedule": "daily",
+    "time": "18:00",
+    "action_type": "self_task",  # Send to agent
+    "action_template": "Please summarize today's activities.",
+    "one_time": False  # Recurring
+}
+```
+
+**Features:**
+- One-time and recurring tasks
+- Automatic `next_run` calculation
+- DST-safe timezone handling
+- Integration with ConsciousnessLoop
+- Channel-based message organization
+
+### Rooms/Channels
+**File:** `backend/api/routes_channels.py`
+
+Discord-style message organization:
+
+```
+Agent
+├── heartbeat-log   (System heartbeats)
+├── task            (Scheduled tasks)
+├── reflection      (Agent reflections)
+└── [custom]        (User-created channels)
+```
+
+**Features:**
+- Default channels auto-created per agent
+- Messages posted to BOTH channel AND main thread
+- Thread system for message replies
+- Discord webhook integration (optional)
+
+### API Endpoints
+
+```bash
+# Heartbeat Configuration
+GET  /api/heartbeat/config?agent_id=default
+PUT  /api/heartbeat/config
+GET  /api/heartbeat/rules?agent_id=default
+POST /api/heartbeat/rules
+PUT  /api/heartbeat/rules/<rule_id>
+DELETE /api/heartbeat/rules/<rule_id>
+GET  /api/heartbeat/status
+POST /api/heartbeat/trigger
+GET  /api/heartbeat/templates
+
+# Tasks
+GET  /api/tasks?agent_id=default
+POST /api/tasks
+GET  /api/tasks/<task_id>
+PUT  /api/tasks/<task_id>
+DELETE /api/tasks/<task_id>
+
+# Channels
+GET  /api/channels?agent_id=default
+POST /api/channels
+GET  /api/channels/<channel_id>/messages
+POST /api/channels/<channel_id>/messages
+```
+
+📖 **Implementation details:** See [IMPLEMENTATION_PLAN_HEARTBEAT_ROOMS.md](IMPLEMENTATION_PLAN_HEARTBEAT_ROOMS.md)
 
 

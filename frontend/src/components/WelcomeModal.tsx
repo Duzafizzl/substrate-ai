@@ -9,9 +9,10 @@ interface SetupStatus {
 
 interface WelcomeModalProps {
   onComplete: () => void;
+  isSettingsMode?: boolean;
 }
 
-export default function WelcomeModal({ onComplete }: WelcomeModalProps) {
+export default function WelcomeModal({ onComplete, isSettingsMode = false }: WelcomeModalProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -23,8 +24,14 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps) {
 
   // Check setup status on mount
   useEffect(() => {
-    checkSetupStatus();
-  }, []);
+    // In settings mode, always show the modal immediately
+    if (isSettingsMode) {
+      setIsVisible(true);
+      setIsLoading(false);
+    } else {
+      checkSetupStatus();
+    }
+  }, [isSettingsMode]);
 
   const checkSetupStatus = async () => {
     try {
@@ -39,7 +46,6 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps) {
       }
       
       const status: SetupStatus = await response.json();
-      
       if (status.needs_setup) {
         setIsVisible(true);
       } else {
@@ -117,13 +123,13 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps) {
           {/* Logo & Title */}
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 mb-4">
-              <span className="text-3xl">🧠</span>
+              <span className="text-3xl">{isSettingsMode ? '⚙️' : '🧠'}</span>
             </div>
             <h1 className="text-2xl font-bold text-white mb-2">
-              Welcome to Substrate AI
+              {isSettingsMode ? 'Settings' : 'Welcome to Substrate AI'}
             </h1>
             <p className="text-slate-400">
-              Your production-ready AI agent framework
+              {isSettingsMode ? 'Manage your API key and configuration' : 'Your production-ready AI agent framework'}
             </p>
           </div>
 
@@ -203,7 +209,7 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps) {
                   className="flex-1 px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors"
                   disabled={isSaving}
                 >
-                  Skip for now
+                  {isSettingsMode ? 'Close' : 'Skip for now'}
                 </button>
                 <button
                   onClick={handleSaveKey}

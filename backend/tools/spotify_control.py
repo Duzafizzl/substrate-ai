@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Spotify Control Tool for Letta
+Spotify Control Tool
 Controls Spotify playback and manages playlists via Web API
 """
 
@@ -23,7 +23,7 @@ SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 SPOTIFY_REFRESH_TOKEN = os.getenv("SPOTIFY_REFRESH_TOKEN")
 
-# In-memory token cache (since we can't write to filesystem in Letta cloud)
+# In-memory token cache for session persistence
 _token_cache = {
     "access_token": None,
     "expires_at": 0

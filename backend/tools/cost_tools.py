@@ -318,8 +318,14 @@ class CostTools:
 if __name__ == "__main__":
     # Test
     from core.cost_tracker import CostTracker
+    from core.postgres_manager import create_postgres_manager_from_env
     
-    tracker = CostTracker()
+    pg = create_postgres_manager_from_env()
+    if not pg:
+        print("❌ PostgreSQL required for CostTracker!")
+        exit(1)
+    
+    tracker = CostTracker(postgres_manager=pg)
     tools = CostTools(tracker)
     
     print("\n🧪 Testing Cost Tools\n")

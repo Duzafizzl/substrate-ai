@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import CreateAgentModal from './CreateAgentModal';
 
 interface Agent {
   id: string;
@@ -18,6 +19,10 @@ export default function AgentSelector({ onAgentChange }: AgentSelectorProps) {
   const [currentAgent, setCurrentAgent] = useState<Agent | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetchAgents();
@@ -27,10 +32,31 @@ export default function AgentSelector({ onAgentChange }: AgentSelectorProps) {
     try {
       const response = await fetch('http://localhost:8284/api/agents');
       const data = await response.json();
-      
       if (data.agents && data.agents.length > 0) {
         setAgents(data.agents);
-        setCurrentAgent(data.agents[0]); // Set first as current
+        
+        // Get agent ID from URL parameter
+        const params = new URLSearchParams(window.location.search);
+        const urlAgentId = params.get('agent');
+        
+        // Find agent by ID from URL, or use first agent
+        let selectedAgent = data.agents[0];
+        if (urlAgentId) {
+          const foundAgent = data.agents.find((a: Agent) => a.id === urlAgentId);
+          if (foundAgent) {
+            selectedAgent = foundAgent;
+            console.log(`📖 AgentSelector: Found agent from URL: ${foundAgent.name} (${foundAgent.id})`);
+          } else {
+            console.log(`⚠️  AgentSelector: Agent ${urlAgentId} not found, using first agent`);
+          }
+        }
+        
+        setCurrentAgent(selectedAgent);
+        
+        // Notify parent of selected agent ID
+        if (onAgentChange) {
+          onAgentChange(selectedAgent.id);
+        }
       }
     } catch (error) {
       console.error('Failed to fetch agents:', error);
@@ -44,6 +70,68 @@ export default function AgentSelector({ onAgentChange }: AgentSelectorProps) {
     setIsOpen(false);
     if (onAgentChange) {
       onAgentChange(agent.id);
+    }
+  };
+
+  const startEditing = (agent: Agent, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent selecting the agent
+    setEditingAgentId(agent.id);
+    setEditName(agent.name);
+  };
+
+  const cancelEditing = () => {
+    setEditingAgentId(null);
+    setEditName('');
+  };
+
+  const saveAgentName = async (agentId: string) => {
+    if (!editName.trim()) {
+      alert('Agent name cannot be empty');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const response = await fetch(`http://localhost:8284/api/agents/${agentId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editName.trim() })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Update agents list
+        const updatedAgents = agents.map(a => 
+          a.id === agentId ? { ...a, name: data.agent.name } : a
+        );
+        setAgents(updatedAgents);
+        
+        // Update current agent if it's the one being edited
+        if (currentAgent?.id === agentId) {
+          setCurrentAgent({ ...currentAgent, name: data.agent.name });
+        }
+        
+        setEditingAgentId(null);
+        setEditName('');
+      } else {
+        const error = await response.json();
+        alert(`Failed to update agent name: ${error.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error updating agent name:', error);
+      alert('Failed to update agent name. Please check your connection.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent, agentId: string) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveAgentName(agentId);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelEditing();
     }
   };
 
@@ -122,11 +210,10 @@ export default function AgentSelector({ onAgentChange }: AgentSelectorProps) {
               {/* Agent List */}
               <div className="max-h-96 overflow-y-auto">
                 {agents.map((agent) => (
-                  <button
+                  <div
                     key={agent.id}
-                    onClick={() => selectAgent(agent)}
                     className={`
-                      w-full px-4 py-3 flex items-start gap-3 hover:bg-gray-800/50 transition-colors
+                      w-full px-4 py-3 flex items-start gap-3 hover:bg-gray-800/50 transition-colors group
                       ${agent.id === currentAgent.id ? 'bg-gray-800/30' : ''}
                     `}
                   >
@@ -146,9 +233,58 @@ export default function AgentSelector({ onAgentChange }: AgentSelectorProps) {
                     {/* Agent Details */}
                     <div className="flex flex-col items-start flex-1 min-w-0">
                       <div className="flex items-center gap-2 w-full">
-                        <span className="text-sm font-semibold text-gray-100 truncate">
-                          {agent.name}
-                        </span>
+                        {editingAgentId === agent.id ? (
+                          <div className="flex items-center gap-2 flex-1">
+                            <input
+                              type="text"
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              onKeyDown={(e) => handleKeyDown(e, agent.id)}
+                              onBlur={() => saveAgentName(agent.id)}
+                              className="flex-1 px-2 py-1 text-sm font-semibold bg-gray-800 border border-purple-500 rounded text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                              autoFocus
+                              disabled={saving}
+                            />
+                            <button
+                              onClick={() => saveAgentName(agent.id)}
+                              disabled={saving}
+                              className="p-1 text-green-400 hover:text-green-300 disabled:opacity-50"
+                              title="Save"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={cancelEditing}
+                              disabled={saving}
+                              className="p-1 text-gray-400 hover:text-gray-300 disabled:opacity-50"
+                              title="Cancel"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <span 
+                              className="text-sm font-semibold text-gray-100 truncate flex-1 cursor-pointer"
+                              onClick={() => selectAgent(agent)}
+                            >
+                              {agent.name}
+                            </span>
+                            <button
+                              onClick={(e) => startEditing(agent, e)}
+                              className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-gray-300 transition-opacity"
+                              title="Edit name"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                          </>
+                        )}
                         {agent.id === currentAgent.id && (
                           <span className="px-2 py-0.5 text-xs font-medium text-purple-400 bg-purple-500/10 rounded-full">
                             Active
@@ -166,12 +302,12 @@ export default function AgentSelector({ onAgentChange }: AgentSelectorProps) {
                     </div>
 
                     {/* Checkmark */}
-                    {agent.id === currentAgent.id && (
+                    {agent.id === currentAgent.id && editingAgentId !== agent.id && (
                       <svg className="w-5 h-5 text-purple-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
                     )}
-                  </button>
+                  </div>
                 ))}
               </div>
 
@@ -181,7 +317,7 @@ export default function AgentSelector({ onAgentChange }: AgentSelectorProps) {
                   className="w-full px-3 py-2 text-sm font-medium text-gray-400 hover:text-gray-200 hover:bg-gray-800/50 rounded-lg transition-colors flex items-center justify-center gap-2"
                   onClick={() => {
                     setIsOpen(false);
-                    // TODO: Open agent creation modal
+                    setShowCreateModal(true);
                   }}
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -194,6 +330,16 @@ export default function AgentSelector({ onAgentChange }: AgentSelectorProps) {
           </>
         )}
       </AnimatePresence>
+      
+      {/* Create Agent Modal */}
+      <CreateAgentModal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onCreated={() => {
+          fetchAgents();
+          setShowCreateModal(false);
+        }}
+      />
     </div>
   );
 }

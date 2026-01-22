@@ -34,12 +34,12 @@ class GraphRAG:
     Better than pure vector search because it understands relationships!
     """
     
-    def __init__(self):
-        self.state_manager = StateManager()
-        try:
-            self.memory_system = MemorySystem()
-        except:
-            self.memory_system = None
+    def __init__(self, postgres_manager=None, state_manager=None, memory_system=None):
+        if not postgres_manager:
+            raise ValueError("PostgresManager is REQUIRED for GraphRAG!")
+        self.postgres_manager = postgres_manager
+        self.state_manager = state_manager
+        self.memory_system = memory_system
     
     def extract_entities(self, query: str) -> Dict[str, List[str]]:
         """

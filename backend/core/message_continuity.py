@@ -7,7 +7,7 @@ Ensures conversational coherence across sessions:
 - Smart message compaction when window gets full
 - Session continuity (pick up where you left off!)
 
-Architecture inspired by Letta's persistence patterns.
+Production-grade message persistence architecture.
 Implementation: Original code by Substrate AI Contributors.
 
 Security:

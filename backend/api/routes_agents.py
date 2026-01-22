@@ -7,6 +7,7 @@ Every config/prompt change creates a version, allowing rollback.
 """
 
 import os
+import uuid
 import logging
 from flask import Blueprint, jsonify, request
 from core.state_manager import StateManager
@@ -19,12 +20,18 @@ agents_bp = Blueprint('agents', __name__)
 # Initialize state manager (will be overridden by server.py)
 _state_manager = None
 _version_manager = None
+_postgres_manager = None
 
-def init_agents_routes(state_manager, version_manager=None):
-    """Initialize routes with state manager and version manager instances"""
-    global _state_manager, _version_manager
+def init_agents_routes(state_manager, version_manager=None, postgres_manager=None):
+    """Initialize routes with state manager, version manager, and postgres manager instances"""
+    global _state_manager, _version_manager, _postgres_manager
     _state_manager = state_manager
-    _version_manager = version_manager or VersionManager()
+    _postgres_manager = postgres_manager
+    # VersionManager requires postgres_manager!
+    if postgres_manager:
+        _version_manager = version_manager or VersionManager(postgres_manager=postgres_manager)
+    else:
+        _version_manager = version_manager
 
 
 @agents_bp.route('/api/agents', methods=['GET'])
@@ -90,15 +97,172 @@ def list_agents():
         return jsonify({'error': str(e)}), 500
 
 
-@agents_bp.route('/api/agents/<agent_id>', methods=['GET'])
-def get_agent(agent_id):
+@agents_bp.route('/api/agents', methods=['POST'])
+def create_agent():
     """
-    Get agent details
+    Create a new agent
+    Body: {name, agent_id?, model?, description?}
+    
+    Creates agent in PostgreSQL with:
+    - Default channels
+    - Default core memory blocks
+    - Initial config
+    
+    If agent_id is provided, it will be used (must be valid UUID format).
+    Otherwise, a new UUID will be generated.
     """
     try:
         if not _state_manager:
             return jsonify({'error': 'State manager not initialized'}), 500
         
+        data = request.json
+        if not data or 'name' not in data:
+            return jsonify({'error': 'name is required'}), 400
+        
+        name = data['name'].strip()
+        if not name:
+            return jsonify({'error': 'name cannot be empty'}), 400
+        
+        # Get model from request or use default
+        model = data.get('model') or os.getenv('DEFAULT_MODEL', 'qwen/qwen-2.5-72b-instruct')
+        description = data.get('description', '').strip()
+        
+        # Check if PostgreSQL is available first
+        from api.server import postgres_manager
+        if not postgres_manager:
+            return jsonify({'error': 'PostgreSQL not available. Multi-agent requires PostgreSQL.'}), 500
+        
+        # Get agent_id from request or generate new UUID
+        if 'agent_id' in data and data['agent_id']:
+            agent_id = data['agent_id'].strip()
+            # Validate UUID format
+            try:
+                uuid.UUID(agent_id)  # This will raise ValueError if invalid
+            except ValueError:
+                return jsonify({'error': 'agent_id must be a valid UUID format'}), 400
+            
+            # Check if agent already exists
+            existing_agent = postgres_manager.get_agent(agent_id)
+            if existing_agent:
+                return jsonify({
+                    'error': f'Agent with ID {agent_id} already exists',
+                    'existing_agent': {
+                        'id': existing_agent.id,
+                        'name': existing_agent.name,
+                        'created_at': existing_agent.created_at.isoformat() if hasattr(existing_agent.created_at, 'isoformat') else str(existing_agent.created_at)
+                    }
+                }), 409  # Conflict
+        else:
+            # Generate UUID for agent
+            agent_id = str(uuid.uuid4())
+        
+        logger.info(f"🆕 Creating new agent: {name} (ID: {agent_id})")
+        
+        # Create agent config
+        config = {
+            'model': model,
+            'temperature': 0.7,
+            'max_tokens': None,
+            'top_p': 1.0,
+            'frequency_penalty': 0.0,
+            'presence_penalty': 0.0,
+            'context_window': int(os.getenv('DEFAULT_CONTEXT_WINDOW', '128000')),
+            'reasoning_enabled': False,
+            'max_reasoning_tokens': None
+        }
+        
+        # Create agent in PostgreSQL
+        db_agent = postgres_manager.create_agent(
+            agent_id=agent_id,
+            name=name,
+            config=config
+        )
+        
+        logger.info(f"✅ Agent created in PostgreSQL: {db_agent.name} ({db_agent.id})")
+        
+        # Initialize default core memory
+        from core.memory_coherence import MemoryCoherenceEngine
+        from core.message_continuity import MessageContinuityManager
+        
+        message_manager = MessageContinuityManager(postgres_manager)
+        memory_engine = MemoryCoherenceEngine(
+            postgres_manager=postgres_manager,
+            message_manager=message_manager
+        )
+        
+        memory_engine.initialize_default_core_memory(agent_id, name)
+        logger.info(f"✅ Default core memory initialized for {name}")
+        
+        # Create default channels
+        postgres_manager._create_default_channels(agent_id)
+        logger.info(f"✅ Default channels created for {name}")
+        
+        # If agent name contains "alex" (case-insensitive), initialize Alex-specific memory
+        if 'alex' in name.lower():
+            try:
+                memory_engine.initialize_alex_start_memory(agent_id)
+                logger.info(f"✅ Alex-specific memory initialized for {name}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to initialize Alex memory: {e}")
+        
+        logger.info(f"🎉 Agent '{name}' fully initialized and ready!")
+        
+        return jsonify({
+            'success': True,
+            'agent': {
+                'id': agent_id,
+                'name': name,
+                'model': model,
+                'description': description or f'{name} - Multi-Agent',
+                'created_at': db_agent.created_at.isoformat() if hasattr(db_agent.created_at, 'isoformat') else str(db_agent.created_at),
+                'is_active': True,
+                'config': config
+            }
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Error creating agent: {e}")
+        import traceback
+        logger.error(f"Stack trace: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+
+
+@agents_bp.route('/api/agents/<agent_id>', methods=['GET'])
+def get_agent(agent_id):
+    """
+    Get agent details
+    Returns the REAL UUID, not 'default'!
+    """
+    try:
+        if not _state_manager:
+            return jsonify({'error': 'State manager not initialized'}), 500
+        
+        # Resolve 'default' to actual agent_id
+        original_agent_id = agent_id
+        if agent_id == 'default':
+            agent_state = _state_manager.get_agent_state()
+            actual_agent_id = agent_state.get('id', 'default')
+            if actual_agent_id != 'default':
+                agent_id = actual_agent_id
+                logger.info(f"🔄 Resolved 'default' ({original_agent_id}) to actual agent_id: {agent_id}")
+        
+        # Try PostgreSQL first
+        from api.server import postgres_manager
+        if postgres_manager:
+            agent = postgres_manager.get_agent(agent_id)
+            if agent:
+                config = agent.config or {}
+                return jsonify({
+                    'id': agent.id,  # REAL UUID!
+                    'name': agent.name,
+                    'model': config.get('model', 'qwen/qwen-2.5-72b-instruct'),
+                    'created_at': agent.created_at.isoformat() if hasattr(agent.created_at, 'isoformat') else str(agent.created_at),
+                    'description': f'{agent.name} - Multi-Agent',
+                    'is_active': True,
+                    'config': config
+                })
+        
+        # Fallback: Use state manager
         agent_state = _state_manager.get_agent_state()
         
         agent = {
@@ -115,6 +279,82 @@ def get_agent(agent_id):
         
     except Exception as e:
         logger.error(f"Error getting agent {agent_id}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
+
+@agents_bp.route('/api/agents/<agent_id>', methods=['PUT'])
+def update_agent(agent_id):
+    """
+    Update agent name and/or description
+    Body: {name?, description?}
+    
+    Updates agent in PostgreSQL database.
+    """
+    try:
+        if not _state_manager:
+            return jsonify({'error': 'State manager not initialized'}), 500
+        
+        data = request.json
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        # Check if PostgreSQL is available
+        from api.server import postgres_manager
+        if not postgres_manager:
+            return jsonify({'error': 'PostgreSQL not available. Multi-agent requires PostgreSQL.'}), 500
+        
+        # Validate agent exists
+        existing_agent = postgres_manager.get_agent(agent_id)
+        if not existing_agent:
+            return jsonify({'error': f'Agent with ID {agent_id} not found'}), 404
+        
+        # Prepare update parameters
+        update_name = None
+        if 'name' in data:
+            new_name = data['name'].strip()
+            if not new_name:
+                return jsonify({'error': 'name cannot be empty'}), 400
+            if new_name != existing_agent.name:
+                update_name = new_name
+                logger.info(f"📝 Updating agent name: '{existing_agent.name}' → '{new_name}'")
+        
+        # Update agent in PostgreSQL
+        updated_agent = postgres_manager.update_agent(
+            agent_id=agent_id,
+            name=update_name
+        )
+        
+        if not updated_agent:
+            return jsonify({'error': 'Failed to update agent'}), 500
+        
+        logger.info(f"✅ Agent '{updated_agent.id}' updated successfully")
+        logger.info(f"   Name: {updated_agent.name}")
+        
+        # Get model from config for response
+        config = updated_agent.config or {}
+        model = config.get('model', 'unknown')
+        
+        return jsonify({
+            'success': True,
+            'agent': {
+                'id': updated_agent.id,
+                'name': updated_agent.name,
+                'model': model,
+                'created_at': updated_agent.created_at.isoformat() if hasattr(updated_agent.created_at, 'isoformat') else str(updated_agent.created_at),
+                'is_active': True,
+                'config': config
+            }
+        })
+        
+    except ValueError as e:
+        logger.error(f"Validation error updating agent {agent_id}: {e}")
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error updating agent {agent_id}: {e}")
+        import traceback
+        logger.error(f"Stack trace: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -141,7 +381,7 @@ def get_agent_config(agent_id):
             'frequency_penalty': 0.0,
             'presence_penalty': 0.0,
             'context_window': int(os.getenv('DEFAULT_CONTEXT_WINDOW', '128000')),
-            # Letta-style Reasoning Settings 🧠
+            # Reasoning Settings 🧠
             'reasoning_enabled': False,
             'max_reasoning_tokens': None
         }
@@ -186,7 +426,7 @@ def update_agent_config(agent_id):
         # Update fields
         allowed_fields = ['model', 'temperature', 'max_tokens', 'top_p', 
                          'frequency_penalty', 'presence_penalty', 'context_window',
-                         'reasoning_enabled', 'max_reasoning_tokens']  # Letta-style reasoning! 🧠
+                         'reasoning_enabled', 'max_reasoning_tokens']  # Reasoning settings 🧠
         
         for field in allowed_fields:
             if field in data and data[field] != current_config.get(field):
@@ -255,17 +495,31 @@ def get_memory_blocks(agent_id):
     Get all memory blocks for an agent
     Returns: [{label, value, limit, description, read_only, ...}]
     
-    NOW READS FROM POSTGRESQL! 🏴‍☠️
+    NOW READS FROM POSTGRESQL!
+    
+    If agent_id is 'default', resolves to actual agent UUID from StateManager.
     """
     try:
         if not _state_manager:
             return jsonify({'error': 'State manager not initialized'}), 500
+        
+        # Resolve 'default' to actual agent_id
+        original_agent_id = agent_id
+        if agent_id == 'default':
+            agent_state = _state_manager.get_agent_state()
+            actual_agent_id = agent_state.get('id', 'default')
+            if actual_agent_id != 'default':
+                agent_id = actual_agent_id
+                logger.info(f"🔄 Resolved 'default' ({original_agent_id}) to actual agent_id: {agent_id}")
+            else:
+                logger.warning(f"⚠️  Could not resolve 'default' - no agent_id in state manager")
         
         ui_blocks = []
         
         # Try PostgreSQL first
         from api.server import postgres_manager
         if postgres_manager:
+            logger.info(f"🔍 Searching for memory blocks with agent_id: {agent_id}")
             with postgres_manager._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -276,6 +530,58 @@ def get_memory_blocks(agent_id):
                 """, (agent_id,))
                 
                 rows = cursor.fetchall()
+                
+                logger.info(f"📦 Found {len(rows)} memory blocks for agent {agent_id}")
+                
+                # Debug: List all found blocks
+                if rows:
+                    for label, content, created_at, metadata in rows:
+                        logger.info(f"   • {label}: {len(content or '')} chars")
+                else:
+                    # Check if agent exists
+                    cursor.execute("SELECT id, name FROM agents WHERE id = %s", (agent_id,))
+                    agent_row = cursor.fetchone()
+                    if agent_row:
+                        agent_name = agent_row[1]
+                        logger.warning(f"⚠️  Agent {agent_id} ({agent_name}) exists but has no memory blocks!")
+                        
+                        # If this is ALEX, try to create Alex-specific blocks
+                        if agent_name.upper() == "ALEX" or "alex" in agent_name.lower():
+                            logger.info(f"   This is Alex - creating Alex-specific memory blocks...")
+                            try:
+                                from api.server import memory_engine
+                                if memory_engine:
+                                    # Check if default blocks exist first
+                                    cursor.execute("""
+                                        SELECT COUNT(*) FROM memories
+                                        WHERE agent_id = %s AND memory_type = 'core'
+                                    """, (agent_id,))
+                                    block_count = cursor.fetchone()[0]
+                                    
+                                    if block_count == 0:
+                                        # Create default blocks first
+                                        memory_engine.initialize_default_core_memory(agent_id, agent_name)
+                                        logger.info(f"   ✅ Created default core memory blocks")
+                                    
+                                    # Create Alex-specific blocks
+                                    memory_engine.initialize_alex_start_memory(agent_id)
+                                    logger.info(f"   ✅ Created Alex-specific memory blocks")
+                                    
+                                    # Reload blocks
+                                    cursor.execute("""
+                                        SELECT label, content, created_at, metadata
+                                        FROM memories
+                                        WHERE agent_id = %s AND memory_type = 'core'
+                                        ORDER BY label
+                                    """, (agent_id,))
+                                    rows = cursor.fetchall()
+                                    logger.info(f"   📦 Now found {len(rows)} memory blocks")
+                            except Exception as e:
+                                logger.error(f"   ❌ Failed to create Alex blocks: {e}")
+                                import traceback
+                                logger.error(traceback.format_exc())
+                    else:
+                        logger.warning(f"⚠️  Agent {agent_id} does not exist in database!")
                 
                 for label, content, created_at, metadata in rows:
                     # metadata is already a dict (psycopg2 handles JSONB)
@@ -307,6 +613,8 @@ def get_memory_blocks(agent_id):
                     'updated_at': block.get('updated_at', '')
                 })
         
+        logger.info(f"✅ Returning {len(ui_blocks)} memory blocks for agent {agent_id}")
+        
         return jsonify({
             'blocks': ui_blocks,
             'count': len(ui_blocks)
@@ -314,6 +622,8 @@ def get_memory_blocks(agent_id):
         
     except Exception as e:
         logger.error(f"Error getting memory blocks: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 
@@ -353,7 +663,7 @@ def update_memory_block(agent_id, block_label):
     Update a memory block
     Body: {value?, description?, limit?, read_only?}
     
-    NOW SAVES TO POSTGRESQL! 🏴‍☠️
+    NOW SAVES TO POSTGRESQL!
     """
     try:
         if not _state_manager:
@@ -508,13 +818,43 @@ def get_system_prompt(agent_id):
     """
     Get agent system prompt
     Returns: {system_prompt: str}
+    
+    NOW AGENT-SPECIFIC! 🎯
+    Loads system prompt from PostgreSQL agent.config['system_prompt']
     """
     try:
         if not _state_manager:
             return jsonify({'error': 'State manager not initialized'}), 500
         
-        # Load directly from state (not from agent_state dict!)
+        # Resolve 'default' to actual agent_id
+        original_agent_id = agent_id
+        if agent_id == 'default':
+            agent_state = _state_manager.get_agent_state()
+            actual_agent_id = agent_state.get('id', 'default')
+            if actual_agent_id != 'default':
+                agent_id = actual_agent_id
+                logger.info(f"🔄 Resolved 'default' ({original_agent_id}) to actual agent_id: {agent_id}")
+        
+        # Load agent-specific system prompt from PostgreSQL
+        from api.server import postgres_manager
+        if postgres_manager:
+            agent = postgres_manager.get_agent(agent_id)
+            if agent:
+                config = agent.config or {}
+                system_prompt = config.get('system_prompt', '')
+                logger.info(f"📖 GET /system-prompt → Loaded for agent '{agent_id}' ({len(system_prompt)} chars)")
+                return jsonify({
+                    'system_prompt': system_prompt
+                })
+            else:
+                logger.warning(f"⚠️  Agent {agent_id} not found in PostgreSQL")
+                return jsonify({
+                    'system_prompt': ''
+                })
+        
+        # Fallback: Load from state manager (legacy)
         system_prompt = _state_manager.get_state('agent:system_prompt', '')
+        logger.info(f"📖 GET /system-prompt → Loaded from state manager ({len(system_prompt)} chars)")
         
         return jsonify({
             'system_prompt': system_prompt
@@ -522,6 +862,8 @@ def get_system_prompt(agent_id):
         
     except Exception as e:
         logger.error(f"Error getting system prompt: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 
@@ -531,7 +873,8 @@ def update_system_prompt(agent_id):
     Update agent system prompt
     Body: {system_prompt: str, change_description?: str}
     
-    NOW WITH AUTO-VERSIONING! 🎯
+    NOW AGENT-SPECIFIC + AUTO-VERSIONING! 🎯
+    Saves system prompt to PostgreSQL agent.config['system_prompt']
     """
     try:
         if not _state_manager:
@@ -541,25 +884,64 @@ def update_system_prompt(agent_id):
         if not data or 'system_prompt' not in data:
             return jsonify({'error': 'system_prompt is required'}), 400
         
-        old_prompt = _state_manager.get_state('agent:system_prompt', '')
+        # Resolve 'default' to actual agent_id
+        original_agent_id = agent_id
+        if agent_id == 'default':
+            agent_state = _state_manager.get_agent_state()
+            actual_agent_id = agent_state.get('id', 'default')
+            if actual_agent_id != 'default':
+                agent_id = actual_agent_id
+                logger.info(f"🔄 Resolved 'default' ({original_agent_id}) to actual agent_id: {agent_id}")
+        
         new_prompt = data['system_prompt']
         
-        # Save directly to state (not through agent_state!)
-        _state_manager.set_state('agent:system_prompt', new_prompt)
-        
-        # VERIFY it was saved! (Prevents silent failures)
-        verified_prompt = _state_manager.get_state('agent:system_prompt', '')
-        if verified_prompt != new_prompt:
-            logger.error(f"⚠️ System prompt verification FAILED!")
-            logger.error(f"   Expected: {len(new_prompt)} chars")
-            logger.error(f"   Got: {len(verified_prompt)} chars")
-            return jsonify({
-                'error': 'System prompt save verification failed!',
-                'expected_length': len(new_prompt),
-                'actual_length': len(verified_prompt)
-            }), 500
-        
-        logger.info(f"✅ System prompt verified in DB: {len(new_prompt)} chars")
+        # Get old prompt for versioning
+        old_prompt = ''
+        from api.server import postgres_manager
+        if postgres_manager:
+            agent = postgres_manager.get_agent(agent_id)
+            if agent:
+                config = agent.config or {}
+                old_prompt = config.get('system_prompt', '')
+                
+                # Update agent config with new system prompt
+                config['system_prompt'] = new_prompt
+                postgres_manager.update_agent(
+                    agent_id=agent_id,
+                    config=config
+                )
+                
+                # VERIFY it was saved!
+                verified_agent = postgres_manager.get_agent(agent_id)
+                verified_prompt = (verified_agent.config or {}).get('system_prompt', '')
+                if verified_prompt != new_prompt:
+                    logger.error(f"⚠️ System prompt verification FAILED!")
+                    logger.error(f"   Expected: {len(new_prompt)} chars")
+                    logger.error(f"   Got: {len(verified_prompt)} chars")
+                    return jsonify({
+                        'error': 'System prompt save verification failed!',
+                        'expected_length': len(new_prompt),
+                        'actual_length': len(verified_prompt)
+                    }), 500
+                
+                logger.info(f"✅ System prompt verified in PostgreSQL: {len(new_prompt)} chars")
+            else:
+                logger.warning(f"⚠️  Agent {agent_id} not found in PostgreSQL")
+                return jsonify({'error': f'Agent {agent_id} not found'}), 404
+        else:
+            # Fallback: Save to state manager (legacy)
+            old_prompt = _state_manager.get_state('agent:system_prompt', '')
+            _state_manager.set_state('agent:system_prompt', new_prompt)
+            
+            # VERIFY it was saved!
+            verified_prompt = _state_manager.get_state('agent:system_prompt', '')
+            if verified_prompt != new_prompt:
+                logger.error(f"⚠️ System prompt verification FAILED!")
+                return jsonify({
+                    'error': 'System prompt save verification failed!',
+                    'expected_length': len(new_prompt),
+                    'actual_length': len(verified_prompt)
+                }), 500
         
         # CREATE VERSION! 🎯
         if _version_manager and old_prompt != new_prompt:
@@ -590,6 +972,8 @@ def update_system_prompt(agent_id):
         
     except Exception as e:
         logger.error(f"Error updating system prompt: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 
@@ -648,8 +1032,10 @@ def new_chat_with_summary(agent_id):
         # Ask LLM for summary
         from core.openrouter_client import OpenRouterClient
         from core.cost_tracker import CostTracker
+        from api.server import postgres_manager as pg_manager
         
-        cost_tracker = CostTracker(db_path=os.getenv("COST_DB_PATH", "./data/costs.db"))
+        # CostTracker now requires postgres_manager
+        cost_tracker = CostTracker(postgres_manager=pg_manager) if pg_manager else None
         client = OpenRouterClient(
             api_key=os.getenv("OPENROUTER_API_KEY"),
             default_model="qwen/qwen-2.5-72b-instruct",
@@ -850,7 +1236,7 @@ def compare_versions(agent_id):
 @agents_bp.route('/api/agents/<agent_id>/export', methods=['GET'])
 def export_agent_file(agent_id):
     """
-    Export agent to .af file (Letta format)
+    Export agent to .af file
     """
     try:
         if not _version_manager:

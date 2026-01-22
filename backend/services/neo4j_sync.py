@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Neo4j Sync Service for Substrate AI
+Neo4j Sync Service for Substrate AI (PostgreSQL-ONLY)
 
-Synchronizes SQLite + ChromaDB data into Neo4j graph database.
+Synchronizes PostgreSQL + ChromaDB data into Neo4j graph database.
 
 Real-time pipeline:
-SQLite (Core Memories) + ChromaDB (Archival Memories) → Neo4j Graph
+PostgreSQL (Core Memories) + ChromaDB (Archival Memories) → Neo4j Graph
+
+100% PostgreSQL - NO SQLite!
 
 Built with attention to detail! 🧠🔥
 """
@@ -23,6 +25,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.state_manager import StateManager, BlockType
 from core.memory_system import MemorySystem
+from core.postgres_manager import create_postgres_manager_from_env
 
 
 class Neo4jSyncError(Exception):
@@ -32,10 +35,10 @@ class Neo4jSyncError(Exception):
 
 class Neo4jSyncService:
     """
-    Synchronizes the AI's memories into Neo4j graph.
+    Synchronizes the AI's memories into Neo4j graph (PostgreSQL-only!).
     
     Features:
-    - Full sync (SQLite + ChromaDB → Neo4j)
+    - Full sync (PostgreSQL + ChromaDB → Neo4j)
     - Incremental sync (detect changes, update delta)
     - Relationship detection (tags, references, etc.)
     - Real-time updates via WebSocket broadcast
@@ -46,7 +49,7 @@ class Neo4jSyncService:
         neo4j_uri: Optional[str] = None,
         neo4j_user: Optional[str] = None,
         neo4j_password: Optional[str] = None,
-        sqlite_path: Optional[str] = None,
+        postgres_manager=None,
         chromadb_path: Optional[str] = None
     ):
         """
@@ -56,7 +59,7 @@ class Neo4jSyncService:
             neo4j_uri: Neo4j connection URI (defaults to env var)
             neo4j_user: Neo4j username (defaults to env var)
             neo4j_password: Neo4j password (defaults to env var)
-            sqlite_path: SQLite database path
+            postgres_manager: PostgreSQL manager instance (REQUIRED!)
             chromadb_path: ChromaDB storage path
         """
         # Load from environment if not provided
@@ -64,11 +67,16 @@ class Neo4jSyncService:
         self.neo4j_user = neo4j_user or os.getenv("NEO4J_USER", "neo4j")
         self.neo4j_password = neo4j_password or os.getenv("NEO4J_PASSWORD", "neo4j_pw")
         
-        sqlite_path = sqlite_path or os.getenv("SQLITE_DB_PATH", "./data/db/substrate_state.db")
         chromadb_path = chromadb_path or os.getenv("CHROMADB_PATH", "./data/chromadb")
         
-        # Initialize state manager
-        self.state_manager = StateManager(db_path=sqlite_path)
+        # PostgreSQL is REQUIRED!
+        if not postgres_manager:
+            postgres_manager = create_postgres_manager_from_env()
+        if not postgres_manager:
+            raise Neo4jSyncError("PostgreSQL manager is REQUIRED! Configure .env and ensure PostgreSQL is running.")
+        
+        # Initialize state manager (PostgreSQL-backed)
+        self.state_manager = StateManager(postgres_manager=postgres_manager)
         
         # Initialize memory system (optional - only if Ollama available)
         try:

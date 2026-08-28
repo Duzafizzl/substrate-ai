@@ -23,7 +23,7 @@ interface ChatBubbleProps {
  * Handles <details> tags for showing summarized message history
  */
 const SystemMessageContent: React.FC<{ content: string }> = ({ content }) => {
-  // Check if content contains <details> tags (summarized messages)
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
   const hasDetails = content.includes('<details>');
   
   if (!hasDetails) {
@@ -52,8 +52,6 @@ const SystemMessageContent: React.FC<{ content: string }> = ({ content }) => {
   const [, , summaryText, detailsContent] = detailsMatch;
   const beforeDetails = content.substring(0, content.indexOf('<details>'));
   const afterDetails = content.substring(content.indexOf('</details>') + 10);
-  
-  const [detailsExpanded, setDetailsExpanded] = useState(false);
   
   return (
     <div className="text-sm text-yellow-200/90 leading-relaxed pt-3">
@@ -164,88 +162,15 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
   
   // Determine message type (inbox or system)
   const msgType = message.message_type || (isSystem ? 'system' : 'inbox');
-  
-  // FILTER: Hide messages that start with !<function_call> (model bug - should use API!)
-  if (response.trim().startsWith('!<function_call>')) {
-    console.warn('⚠️  Filtering !<function_call> message (model should use tool API!):', response.substring(0, 100));
-    return null;  // Don't render this message
-  }
-  
-  // SYSTEM MESSAGES: Special rendering (Context Window Management!)
-  if (msgType === 'system' || isSystem) {
-    // Check if it's a summary (contains "ZUSAMMENFASSUNG")
-    const isSummary = response.includes('ZUSAMMENFASSUNG') || response.includes('📝');
-    
-    // Extract teaser (first line or first 100 chars)
-    const teaser = isSummary 
-      ? '📝 Zusammenfassung (Context Window Management)'
-      : response.split('\n')[0].substring(0, 100) + (response.length > 100 ? '...' : '');
-    
-    return (
-      <motion.div
-        className="flex justify-center mb-4"
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.3 }}
-      >
-        <div className="max-w-3xl w-full">
-          <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg overflow-hidden" role="alert">
-            {/* System Header (Clickable) */}
-            <button
-              className="w-full flex items-center justify-between p-4 hover:bg-yellow-900/30 transition-colors text-left focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 focus:ring-offset-yellow-900/20"
-              onClick={() => setIsExpanded(!isExpanded)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  setIsExpanded(!isExpanded);
-                }
-              }}
-              aria-expanded={isExpanded}
-              aria-label={`${isExpanded ? 'Collapse' : 'Expand'} system message: ${teaser}`}
-            >
-              <div className="flex items-center gap-2 flex-1">
-                <svg className="w-4 h-4 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span className="text-xs font-bold text-yellow-500 uppercase tracking-wider">
-                  [SYSTEM]
-                </span>
-                <span className="text-sm text-yellow-200">
-                  {teaser}
-                </span>
-              </div>
-              
-              {/* Expand/Collapse Arrow */}
-              <svg 
-                className={`w-5 h-5 text-yellow-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                fill="none" 
-                viewBox="0 0 24 24" 
-                stroke="currentColor"
-                aria-hidden="true"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-            
-            {/* System Message Content (Collapsible!) */}
-            {isExpanded && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="px-4 pb-4 border-t border-yellow-700/30"
-                aria-hidden={!isExpanded}
-              >
-                <SystemMessageContent content={response} />
-              </motion.div>
-            )}
-          </div>
-        </div>
-      </motion.div>
-    );
+  const isHiddenFunctionCall = response.trim().startsWith('!<function_call>');
+  const isSystemMessage = msgType === 'system' || isSystem;
+
+  useEffect(() => {
+    if (isHiddenFunctionCall) {
+      console.warn('⚠️  Filtering !<function_call> message (model should use tool API!):', response.substring(0, 100));
     }
-  
+  }, [isHiddenFunctionCall, response]);
+
   // Debug: Log structured data for assistant messages (only once on mount!)
   useEffect(() => {
     if (!isUser) {
@@ -294,6 +219,76 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
       speak(response);
     }
   };
+
+  if (isHiddenFunctionCall) {
+    return null;
+  }
+
+  if (isSystemMessage) {
+    const isSummary = response.includes('ZUSAMMENFASSUNG') || response.includes('📝');
+    const teaser = isSummary
+      ? '📝 Zusammenfassung (Context Window Management)'
+      : response.split('\n')[0].substring(0, 100) + (response.length > 100 ? '...' : '');
+
+    return (
+      <motion.div
+        className="flex justify-center mb-4"
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.3 }}
+      >
+        <div className="max-w-3xl w-full">
+          <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg overflow-hidden" role="alert">
+            <button
+              className="w-full flex items-center justify-between p-4 hover:bg-yellow-900/30 transition-colors text-left focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 focus:ring-offset-yellow-900/20"
+              onClick={() => setIsExpanded(!isExpanded)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setIsExpanded(!isExpanded);
+                }
+              }}
+              aria-expanded={isExpanded}
+              aria-label={`${isExpanded ? 'Collapse' : 'Expand'} system message: ${teaser}`}
+            >
+              <div className="flex items-center gap-2 flex-1">
+                <svg className="w-4 h-4 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-xs font-bold text-yellow-500 uppercase tracking-wider">
+                  [SYSTEM]
+                </span>
+                <span className="text-sm text-yellow-200">
+                  {teaser}
+                </span>
+              </div>
+              <svg
+                className={`w-5 h-5 text-yellow-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {isExpanded && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="px-4 pb-4 border-t border-yellow-700/30"
+                aria-hidden={!isExpanded}
+              >
+                <SystemMessageContent content={response} />
+              </motion.div>
+            )}
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
   
   return (
     <>

@@ -1,0 +1,67 @@
+{
+  "header": {
+    "rooms": "Rooms",
+    "tasks": "Tasks",
+    "heartbeat": "Heartbeat",
+    "settings": "Settings",
+    "clearChat": "Clear chat",
+    "toggleSettings": "Toggle settings",
+    "toggleMemory": "Toggle memory panel"
+  },
+  "modelSettings": {
+    "contextWindow": "Context Window",
+    "tokens": "tokens",
+    "max": "Max",
+    "contextWindowHint": "{{modelName}} supports up to {{maxTokens}} context tokens."
+  },
+  "modelInfo": {
+    "pricing": {
+      "input": "Input",
+      "output": "Output",
+      "context": "Context",
+      "free": "Free",
+      "cheap": "Cheap",
+      "moderate": "Moderate",
+      "expensive": "Expensive",
+      "veryExpensive": "Very Expensive"
+    },
+    "quality": {
+      "value": "Value",
+      "valueScoreTooltip": "Value score: {{score}}/100",
+      "tier": {
+        "flagship": "Flagship",
+        "premium": "Premium",
+        "good": "Good",
+        "budget": "Budget",
+        "experimental": "Experimental"
+      }
+    },
+    "capabilities": {
+      "title": "Capabilities",
+      "vision": {
+        "label": "Vision",
+        "description": "Image understanding"
+      },
+      "tools": {
+        "label": "Tools",
+        "description": "Function / tool calling"
+      },
+      "reasoning": {
+        "label": "Reasoning",
+        "description": "Extended thinking / reasoning"
+      },
+      "streaming": {
+        "label": "Streaming",
+        "description": "Token streaming support"
+      },
+      "longContext": {
+        "label": "Long Context",
+        "description": "Large context window"
+      },
+      "fast": {
+        "label": "Fast",
+        "description": "Low latency responses"
+      }
+    }
+  }
+}

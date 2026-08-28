@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 export interface Node {
   id: string;
-  label?: string;          // optional – flat JSON hat evtl. keine label‑Eigenschaft
+  label?: string;          // optional - flat JSON may omit label
   type?: 'concept' | 'message';
   weight?: number;
 }

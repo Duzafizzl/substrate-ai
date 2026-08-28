@@ -1,0 +1,67 @@
+{
+  "header": {
+    "rooms": "Räume",
+    "tasks": "Aufgaben",
+    "heartbeat": "Heartbeat",
+    "settings": "Einstellungen",
+    "clearChat": "Chat leeren",
+    "toggleSettings": "Einstellungen umschalten",
+    "toggleMemory": "Memory-Panel umschalten"
+  },
+  "modelSettings": {
+    "contextWindow": "Kontextfenster",
+    "tokens": "Tokens",
+    "max": "Max",
+    "contextWindowHint": "{{modelName}} unterstützt bis zu {{maxTokens}} Kontext-Tokens."
+  },
+  "modelInfo": {
+    "pricing": {
+      "input": "Input",
+      "output": "Output",
+      "context": "Kontext",
+      "free": "Kostenlos",
+      "cheap": "Günstig",
+      "moderate": "Moderat",
+      "expensive": "Teuer",
+      "veryExpensive": "Sehr teuer"
+    },
+    "quality": {
+      "value": "Wert",
+      "valueScoreTooltip": "Value-Score: {{score}}/100",
+      "tier": {
+        "flagship": "Flagship",
+        "premium": "Premium",
+        "good": "Gut",
+        "budget": "Budget",
+        "experimental": "Experimentell"
+      }
+    },
+    "capabilities": {
+      "title": "Fähigkeiten",
+      "vision": {
+        "label": "Vision",
+        "description": "Bildverständnis"
+      },
+      "tools": {
+        "label": "Tools",
+        "description": "Function / Tool Calling"
+      },
+      "reasoning": {
+        "label": "Reasoning",
+        "description": "Erweitertes Denken"
+      },
+      "streaming": {
+        "label": "Streaming",
+        "description": "Token-Streaming"
+      },
+      "longContext": {
+        "label": "Langer Kontext",
+        "description": "Großes Kontextfenster"
+      },
+      "fast": {
+        "label": "Schnell",
+        "description": "Niedrige Latenz"
+      }
+    }
+  }
+}
